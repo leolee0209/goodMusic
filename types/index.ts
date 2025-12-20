@@ -2,6 +2,7 @@ export interface Track {
   id: string;
   title: string;
   artist: string;
+  album?: string;
   uri: string;
   artwork?: string;
   lrc?: string; // Content of the LRC file
@@ -27,6 +28,12 @@ export interface MusicContextType {
   toggleRepeatMode: () => void;
   toggleFavorite: (id: string) => void;
   toggleLyricsView: () => void;
+  refreshLibrary: () => Promise<void>;
+  importLocalFolder: () => Promise<void>;
+  downloadDemoTrack: () => Promise<void>;
+  pickAndImportFiles: () => Promise<void>;
   playlist: Track[];
   setPlaylist: (tracks: Track[]) => void;
+  activeGroup: { title: string; tracks: Track[] } | null;
+  setActiveGroup: (group: { title: string; tracks: Track[] } | null) => void;
 }

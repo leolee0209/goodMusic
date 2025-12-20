@@ -1,6 +1,9 @@
 import { Stack } from "expo-router";
 import { MusicProvider } from "../contexts/MusicContext";
 import { StatusBar } from "expo-status-bar";
+import { Buffer } from 'buffer';
+
+global.Buffer = global.Buffer || Buffer;
 
 export default function RootLayout() {
   return (

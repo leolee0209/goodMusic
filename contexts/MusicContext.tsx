@@ -2,6 +2,11 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Track, MusicContextType, RepeatMode } from '../types';
+import * as FileSystem from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import { getAllTracks, initDatabase } from '../utils/database';
+import { syncLibrary } from '../utils/librarySync';
 
 const MusicContext = createContext<MusicContextType | undefined>(undefined);
 
@@ -25,6 +30,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [favorites, setFavorites] = useState<string[]>([]);
   const [showLyrics, setShowLyrics] = useState(false);
+  const [activeGroup, setActiveGroup] = useState<{ title: string; tracks: Track[] } | null>(null);
   
   const soundRef = useRef<Audio.Sound | null>(null);
 
@@ -41,6 +47,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     };
     configureAudio();
+
+    // Initialize DB and Load Library
+    const loadLibrary = async () => {
+      await initDatabase();
+      const tracks = await getAllTracks();
+      setPlaylist(tracks);
+      setOriginalPlaylist(tracks);
+    };
+    loadLibrary();
 
     // Load preferences
     const loadPreferences = async () => {
@@ -240,6 +255,103 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const refreshLibrary = async () => {
+    const syncedTracks = await syncLibrary();
+    if (Array.isArray(syncedTracks) && syncedTracks.length > 0) {
+       setPlaylist(syncedTracks);
+       setOriginalPlaylist(syncedTracks);
+    } else {
+       const dbTracks = await getAllTracks();
+       setPlaylist(dbTracks);
+       setOriginalPlaylist(dbTracks);
+    }
+  };
+
+  const importLocalFolder = async () => {
+    // Manual folder picker (Android) or scan docs (iOS)
+    if (Platform.OS === 'android') {
+      try {
+        const permissions = await (FileSystem as any).StorageAccessFramework.requestDirectoryPermissionsAsync();
+        if (permissions.granted) {
+          // We have a new folder. Scan it.
+          // Note: syncLibrary only scans MediaLibrary + DocDir.
+          // We should append these results or add them to DB?
+          // Let's add to DB.
+          const uri = permissions.directoryUri;
+          const tracks = await import('../utils/fileScanner').then(m => m.scanFolder(uri));
+          
+          if (tracks.length > 0) {
+             await import('../utils/database').then(m => m.insertTracks(tracks));
+             refreshLibrary(); // Reload from DB
+          }
+        }
+      } catch (e) {
+        console.warn("Permission rejected or error", e);
+      }
+    } else {
+      // iOS: Just refresh library which scans documents
+      refreshLibrary();
+    }
+  };
+
+  const downloadDemoTrack = async () => {
+    try {
+      const uri = (FileSystem as any).documentDirectory + 'demosong.mp3';
+      const lrcUri = (FileSystem as any).documentDirectory + 'demosong.lrc';
+      
+      // Download MP3
+      await FileSystem.downloadAsync(
+        'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        uri
+      );
+      
+      // Write Dummy LRC
+      const lrcContent = `[00:00.00] Demo Local Track
+[00:05.00] This file is now on your device
+[00:10.00] Testing the offline capability
+[00:15.00] It works!`;
+      await FileSystem.writeAsStringAsync(lrcUri, lrcContent);
+      
+      console.log("Demo track downloaded to:", uri);
+      // Auto-refresh
+      refreshLibrary();
+    } catch (e) {
+      console.error("Download failed:", e);
+    }
+  };
+
+  const pickAndImportFiles = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['audio/*', 'application/octet-stream'], // octet-stream for .lrc
+        multiple: true,
+        copyToCacheDirectory: true
+      });
+
+      if (!result.canceled) {
+        const destDir = (FileSystem as any).documentDirectory + 'Imported/';
+        // Ensure directory exists
+        const dirInfo = await FileSystem.getInfoAsync(destDir);
+        if (!dirInfo.exists) {
+          await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
+        }
+
+        for (const file of result.assets) {
+          const destUri = destDir + file.name;
+          await FileSystem.copyAsync({
+            from: file.uri,
+            to: destUri
+          });
+        }
+
+        // Rescan
+        refreshLibrary();
+      }
+    } catch (e) {
+      console.error("Pick and Import failed:", e);
+    }
+  };
+
   return (
     <MusicContext.Provider value={{
       currentTrack,
@@ -259,8 +371,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       toggleRepeatMode,
       toggleFavorite,
       toggleLyricsView,
+      refreshLibrary,
+      downloadDemoTrack,
+      pickAndImportFiles,
+      importLocalFolder,
       playlist,
       setPlaylist,
+      activeGroup,
+      setActiveGroup,
     }}>
       {children}
     </MusicContext.Provider>
