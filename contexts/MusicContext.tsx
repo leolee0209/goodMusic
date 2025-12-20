@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import { createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Track, MusicContextType, RepeatMode } from '../types';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -21,9 +21,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [positionMillis, setPositionMillis] = useState(0);
   const [durationMillis, setDurationMillis] = useState(0);
   
-  // 'playlist' is the Active Queue (what is actually being played, potentially shuffled)
   const [playlist, setPlaylistState] = useState<Track[]>([]);
-  // 'originalPlaylist' keeps the source order (e.g. album order)
   const [originalPlaylist, setOriginalPlaylist] = useState<Track[]>([]);
   
   const [isShuffle, setIsShuffle] = useState(false);
@@ -32,15 +30,22 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [showLyrics, setShowLyrics] = useState(false);
   const [activeGroup, setActiveGroup] = useState<{ title: string; tracks: Track[] } | null>(null);
   
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const playerRef = useRef<AudioPlayer | null>(null);
+
+  // We need refs to access latest state in event listeners
+  const stateRef = useRef({ repeatMode, playlist, currentTrack, isShuffle });
+  useEffect(() => {
+    stateRef.current = { repeatMode, playlist, currentTrack, isShuffle };
+  }, [repeatMode, playlist, currentTrack, isShuffle]);
 
   useEffect(() => {
+    // 1. Configure Audio Mode
     const configureAudio = async () => {
       try {
-        await Audio.setAudioModeAsync({
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: true,
-          shouldDuckAndroid: true,
+        await setAudioModeAsync({
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          interruptionMode: 'duckOthers' 
         });
       } catch (e) {
         console.error("Error configuring audio:", e);
@@ -48,7 +53,23 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     configureAudio();
 
-    // Initialize DB and Load Library
+    // 2. Init Player
+    const player = createAudioPlayer(null);
+    playerRef.current = player;
+
+    // 3. Setup Listener
+    const listener = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+      // Map seconds to millis for compatibility
+      setPositionMillis(status.currentTime * 1000);
+      setDurationMillis(status.duration * 1000);
+      setIsPlaying(status.playing);
+      
+      if (status.didJustFinish) {
+        handleTrackEnd();
+      }
+    });
+
+    // 4. Load Data
     const loadLibrary = async () => {
       await initDatabase();
       const tracks = await getAllTracks();
@@ -57,7 +78,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     loadLibrary();
 
-    // Load preferences
+    // 5. Load Preferences
     const loadPreferences = async () => {
       try {
         const shuffle = await AsyncStorage.getItem(STORAGE_KEY_SHUFFLE);
@@ -76,116 +97,105 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     loadPreferences();
 
     return () => {
-      if (soundRef.current) {
-        soundRef.current.unloadAsync();
-      }
+      listener.remove();
+      // player.remove() might be needed if supported to cleanup native resources
+      // player.release() ? expo-audio documentation usually clarifies. 
+      // Assuming GC handles it or remove() if method exists.
+      // SharedObject typically has release() or similar?
+      // createAudioPlayer docs say "doesn't release automatically".
+      // But we keep it alive for app lifetime usually.
     };
   }, []);
 
-  const playTrack = async (track: Track) => {
-    try {
-      if (soundRef.current) {
-        await soundRef.current.unloadAsync();
+  const handleTrackEnd = () => {
+    const { repeatMode, playlist, currentTrack, isShuffle } = stateRef.current;
+    
+    if (repeatMode === 'one') {
+      if (playerRef.current) {
+        playerRef.current.seekTo(0);
+        playerRef.current.play();
       }
+    } else {
+      if (!currentTrack || playlist.length === 0) return;
+      const currentIndex = playlist.findIndex(t => t.id === currentTrack.id);
+      const nextIndex = (currentIndex + 1) % playlist.length;
+      
+      if (nextIndex === 0 && repeatMode !== 'all') {
+         // Stop
+         return; 
+      }
+      playTrackInternal(playlist[nextIndex]);
+    }
+  };
 
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: track.uri },
-        { shouldPlay: true }
-      );
-
-      soundRef.current = sound;
+  // Internal helper to avoid circular dependency or stale state issues if needed
+  // But playTrack is stable.
+  const playTrackInternal = async (track: Track) => {
+    try {
+      if (!playerRef.current) return;
+      playerRef.current.replace(track.uri);
+      playerRef.current.play();
       setCurrentTrack(track);
       setIsPlaying(true);
-
-      sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
     } catch (error) {
       console.error('Error playing track:', error);
     }
   };
 
-  const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
-    if (status.isLoaded) {
-      setPositionMillis(status.positionMillis);
-      setDurationMillis(status.durationMillis || 0);
-      setIsPlaying(status.isPlaying);
-      
-      if (status.didJustFinish) {
-        handleTrackEnd();
-      }
-    }
-  };
-
-  const handleTrackEnd = () => {
-    if (repeatMode === 'one') {
-      if (soundRef.current) {
-        soundRef.current.replayAsync();
-      }
-    } else {
-      playNext();
-    }
+  const playTrack = async (track: Track) => {
+    playTrackInternal(track);
   };
 
   const togglePlayPause = async () => {
-    if (!soundRef.current) return;
-
+    if (!playerRef.current) return;
     if (isPlaying) {
-      await soundRef.current.pauseAsync();
+      playerRef.current.pause();
     } else {
-      await soundRef.current.playAsync();
+      playerRef.current.play();
     }
   };
 
   const seekTo = async (millis: number) => {
-    if (soundRef.current) {
-      await soundRef.current.setPositionAsync(millis);
+    if (playerRef.current) {
+      // Convert millis to seconds
+      await playerRef.current.seekTo(millis / 1000);
     }
   };
 
   const playNext = () => {
     if (!currentTrack || playlist.length === 0) return;
-    
     const currentIndex = playlist.findIndex(t => t.id === currentTrack.id);
     let nextIndex = currentIndex + 1;
 
-    // Handle end of playlist
     if (nextIndex >= playlist.length) {
       if (repeatMode === 'all') {
         nextIndex = 0;
       } else {
-        // Stop playback if not repeating
         setIsPlaying(false);
         return; 
       }
     }
-    
     playTrack(playlist[nextIndex]);
   };
 
   const playPrev = () => {
     if (!currentTrack || playlist.length === 0) return;
-    
-    // If we are more than 3 seconds into the song, restart it instead
     if (positionMillis > 3000) {
       seekTo(0);
       return;
     }
-
     const currentIndex = playlist.findIndex(t => t.id === currentTrack.id);
     let prevIndex = currentIndex - 1;
-    
     if (prevIndex < 0) {
       if (repeatMode === 'all') {
         prevIndex = playlist.length - 1;
       } else {
-        // Wrap to start or stop? Usually prev at start goes to start of song.
-        // If index is 0 and we hit prev (and pos < 3s), we usually go to last song if repeat all, else stay at 0.
         prevIndex = 0;
       }
     }
     playTrack(playlist[prevIndex]);
   };
 
-  // Helper to shuffle array
   const shuffleArray = (array: Track[]) => {
     const newArr = [...array];
     for (let i = newArr.length - 1; i > 0; i--) {
@@ -201,7 +211,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     AsyncStorage.setItem(STORAGE_KEY_SHUFFLE, JSON.stringify(newShuffleState));
 
     if (newShuffleState) {
-      // Shuffle ON: Shuffle the ORIGINAL playlist, but keep current track first if playing
       if (currentTrack && originalPlaylist.length > 0) {
         const others = originalPlaylist.filter(t => t.id !== currentTrack.id);
         const shuffledOthers = shuffleArray(others);
@@ -210,7 +219,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
          setPlaylistState(shuffleArray(originalPlaylist));
       }
     } else {
-      // Shuffle OFF: Restore original order
       setPlaylistState(originalPlaylist);
     }
   };
@@ -240,15 +248,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     AsyncStorage.setItem(STORAGE_KEY_SHOW_LYRICS, JSON.stringify(newValue));
   };
 
-  // When setting a new playlist (e.g. from Home), we reset everything
   const setPlaylist = (tracks: Track[]) => {
     setOriginalPlaylist(tracks);
-    // If shuffle is currently on, we should probably shuffle this new list immediately?
-    // Or respect the flag.
     if (isShuffle) {
-       // Logic: if we just clicked a track to start this playlist, that track should be first.
-       // But playTrack is called separately usually.
-       // For now, just shuffle it all.
        setPlaylistState(shuffleArray(tracks));
     } else {
        setPlaylistState(tracks);
@@ -268,28 +270,22 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const importLocalFolder = async () => {
-    // Manual folder picker (Android) or scan docs (iOS)
     if (Platform.OS === 'android') {
       try {
         const permissions = await (FileSystem as any).StorageAccessFramework.requestDirectoryPermissionsAsync();
         if (permissions.granted) {
-          // We have a new folder. Scan it.
-          // Note: syncLibrary only scans MediaLibrary + DocDir.
-          // We should append these results or add them to DB?
-          // Let's add to DB.
           const uri = permissions.directoryUri;
           const tracks = await import('../utils/fileScanner').then(m => m.scanFolder(uri));
           
           if (tracks.length > 0) {
              await import('../utils/database').then(m => m.insertTracks(tracks));
-             refreshLibrary(); // Reload from DB
+             refreshLibrary();
           }
         }
       } catch (e) {
         console.warn("Permission rejected or error", e);
       }
     } else {
-      // iOS: Just refresh library which scans documents
       refreshLibrary();
     }
   };
@@ -299,13 +295,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const uri = (FileSystem as any).documentDirectory + 'demosong.mp3';
       const lrcUri = (FileSystem as any).documentDirectory + 'demosong.lrc';
       
-      // Download MP3
       await FileSystem.downloadAsync(
         'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
         uri
       );
       
-      // Write Dummy LRC
       const lrcContent = `[00:00.00] Demo Local Track
 [00:05.00] This file is now on your device
 [00:10.00] Testing the offline capability
@@ -313,7 +307,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await FileSystem.writeAsStringAsync(lrcUri, lrcContent);
       
       console.log("Demo track downloaded to:", uri);
-      // Auto-refresh
       refreshLibrary();
     } catch (e) {
       console.error("Download failed:", e);
@@ -323,14 +316,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pickAndImportFiles = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['audio/*', 'application/octet-stream'], // octet-stream for .lrc
+        type: ['audio/*', 'application/octet-stream'],
         multiple: true,
         copyToCacheDirectory: true
       });
 
       if (!result.canceled) {
         const destDir = (FileSystem as any).documentDirectory + 'Imported/';
-        // Ensure directory exists
         const dirInfo = await FileSystem.getInfoAsync(destDir);
         if (!dirInfo.exists) {
           await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
@@ -343,8 +335,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             to: destUri
           });
         }
-
-        // Rescan
         refreshLibrary();
       }
     } catch (e) {
@@ -372,9 +362,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       toggleFavorite,
       toggleLyricsView,
       refreshLibrary,
+      importLocalFolder,
       downloadDemoTrack,
       pickAndImportFiles,
-      importLocalFolder,
       playlist,
       setPlaylist,
       activeGroup,

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, SafeAreaView, TextInput, Dimensions, Alert, Platform } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, TextInput, Dimensions, Alert, Platform } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
 import { DUMMY_PLAYLIST } from '../constants/dummyData';
@@ -300,8 +301,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    marginTop: 10, // status bar spacing if needed, though SafeArea handles usually. 
-    // But SafeAreaView on Android might need extra padding or standard header height.
+    // marginTop: 10, // Removed to avoid double padding with SafeAreaView
   },
   searchContainer: {
     flex: 1,

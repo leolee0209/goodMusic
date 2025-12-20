@@ -14,7 +14,7 @@ export default function RootLayout() {
         headerTintColor: '#fff',
         contentStyle: { backgroundColor: '#121212' }
       }}>
-        <Stack.Screen name="index" options={{ title: "GoodMusic" }} />
+        <Stack.Screen name="index" options={{ title: "GoodMusic", headerShown: false }} />
         <Stack.Screen name="player" options={{ 
           presentation: 'modal',
           title: 'Now Playing',
