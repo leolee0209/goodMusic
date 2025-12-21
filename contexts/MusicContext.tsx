@@ -90,7 +90,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playerRef.current = player;
 
     const listener = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
-      // Don't update state if we are in the middle of replacing a track
       if (isTransitioning.current) return;
 
       setPositionMillis(status.currentTime * 1000);
@@ -154,12 +153,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       
       isTransitioning.current = true;
       setCurrentTrack(track);
-      setIsPlaying(true); // Optimistic UI update
+      setIsPlaying(true);
 
-      // Replace source
       playerRef.current.replace(track.uri);
       
-      // Update Lock Screen Metadata
       if (playerRef.current && typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
         (playerRef.current as any).setActiveForLockScreen(true, {
           title: track.title,
@@ -169,10 +166,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
       }
 
-      // Ensure playback starts
       playerRef.current.play();
       
-      // End transition after a short tick to let the internal player state stabilize
       setTimeout(() => {
         isTransitioning.current = false;
       }, 200);
@@ -352,29 +347,44 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         try {
           const musicDir = FileSystem.documentDirectory + 'music/';
           await FileSystem.makeDirectoryAsync(musicDir, { intermediates: true });
+
           if (Platform.OS === 'android') {
             const permissions = await (FileSystem as any).StorageAccessFramework.requestDirectoryPermissionsAsync();
             if (permissions.granted) {
               const uri = permissions.directoryUri;
               const files = await (FileSystem as any).StorageAccessFramework.readDirectoryAsync(uri);
+              
               setScanProgress({ current: 0, total: files.length });
               for (let i = 0; i < files.length; i++) {
                 const fileUri = files[i];
                 const fileName = decodeURIComponent(fileUri).split('/').pop();
-                if (fileName) await FileSystem.copyAsync({ from: fileUri, to: musicDir + fileName });
+                if (fileName) {
+                  await FileSystem.copyAsync({
+                    from: fileUri,
+                    to: musicDir + fileName
+                  });
+                }
                 setScanProgress(prev => ({ ...prev, current: i + 1 }));
               }
             }
           } else {
-            const result = await DocumentPicker.getDocumentAsync({ type: 'public.folder', copyToCacheDirectory: false });
+            const result = await DocumentPicker.getDocumentAsync({
+              type: 'public.folder',
+              copyToCacheDirectory: false
+            });
+
             if (!result.canceled && result.assets && result.assets.length > 0) {
               const uri = result.assets[0].uri;
               const files = await FileSystem.readDirectoryAsync(uri);
+              
               setScanProgress({ current: 0, total: files.length });
               for (let i = 0; i < files.length; i++) {
                 const fileName = files[i];
                 if (!fileName.startsWith('.')) {
-                  await FileSystem.copyAsync({ from: uri + (uri.endsWith('/') ? '' : '/') + fileName, to: musicDir + fileName });
+                  await FileSystem.copyAsync({
+                    from: uri + (uri.endsWith('/') ? '' : '/') + fileName,
+                    to: musicDir + fileName
+                  });
                 }
                 setScanProgress(prev => ({ ...prev, current: i + 1 }));
               }
@@ -426,15 +436,27 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         try {
-          const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*', 'application/octet-stream'], multiple: true, copyToCacheDirectory: true });
+          const result = await DocumentPicker.getDocumentAsync({
+            type: ['audio/*', 'application/octet-stream'],
+            multiple: true,
+            copyToCacheDirectory: true
+          });
+
           if (!result.canceled) {
             const destDir = FileSystem.documentDirectory + 'music/';
             const dirInfo = await FileSystem.getInfoAsync(destDir);
-            if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
+            if (!dirInfo.exists) {
+              await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
+            }
+
             setScanProgress({ current: 0, total: result.assets.length });
             for (let i = 0; i < result.assets.length; i++) {
               const file = result.assets[i];
-              await FileSystem.copyAsync({ from: file.uri, to: destDir + file.name });
+              const destUri = destDir + file.name;
+              await FileSystem.copyAsync({
+                from: file.uri,
+                to: destUri
+              });
               setScanProgress(prev => ({ ...prev, current: i + 1 }));
             }
             // Incremental final sync with real-time UI updates
@@ -463,7 +485,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               }
             );
           }
-        } catch (e) { console.error("Pick and Import failed:", e); }
+        } catch (e) {
+          console.error("Pick and Import failed:", e);
+        }
         resolve();
       });
     });
