@@ -312,19 +312,30 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         let currentBatch: Track[] = [];
-        const BATCH_SIZE = 5;
-        const syncedTracks = await syncLibrary((track) => {
-          currentBatch.push(track);
-          if (currentBatch.length >= BATCH_SIZE) {
-            const batchToProcess = [...currentBatch];
-            currentBatch = [];
-            setLibrary(prev => {
-              const prevMap = new Map(prev.map(t => [t.id, t]));
-              batchToProcess.forEach(t => prevMap.set(t.id, t));
-              return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
-            });
+        const BATCH_SIZE = 25;
+        let processedCount = 0;
+
+        const syncedTracks = await syncLibrary(
+          (track) => {
+            processedCount++;
+            setScanProgress(prev => ({ ...prev, current: processedCount }));
+            
+            currentBatch.push(track);
+            if (currentBatch.length >= BATCH_SIZE) {
+              const batchToProcess = [...currentBatch];
+              currentBatch = [];
+              setLibrary(prev => {
+                const prevMap = new Map(prev.map(t => [t.id, t]));
+                batchToProcess.forEach(t => prevMap.set(t.id, t));
+                return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
+              });
+            }
+          },
+          (total) => {
+            setScanProgress({ current: 0, total });
           }
-        });
+        );
+
         if (Array.isArray(syncedTracks)) {
            setLibrary(syncedTracks);
            setPlaylistState(prev => prev.length === 0 ? syncedTracks : prev);
@@ -369,13 +380,31 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               }
             }
           }
-          await syncLibrary((track) => {
-            setLibrary(prev => {
-              const prevMap = new Map(prev.map(t => [t.id, t]));
-              prevMap.set(track.id, track);
-              return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
-            });
-          });
+          // Incremental final sync with real-time UI updates
+          let syncCount = 0;
+          let currentSyncBatch: Track[] = [];
+          const SYNC_BATCH_SIZE = 25;
+
+          await syncLibrary(
+            (track) => {
+              syncCount++;
+              setScanProgress(prev => ({ ...prev, current: syncCount }));
+              currentSyncBatch.push(track);
+
+              if (currentSyncBatch.length >= SYNC_BATCH_SIZE) {
+                const batchToProcess = [...currentSyncBatch];
+                currentSyncBatch = [];
+                setLibrary(prev => {
+                  const prevMap = new Map(prev.map(t => [t.id, t]));
+                  batchToProcess.forEach(t => prevMap.set(t.id, t));
+                  return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
+                });
+              }
+            },
+            (total) => {
+              setScanProgress({ current: 0, total });
+            }
+          );
         } catch (e) { console.warn("Folder import error:", e); }
         resolve();
       });
@@ -408,13 +437,31 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               await FileSystem.copyAsync({ from: file.uri, to: destDir + file.name });
               setScanProgress(prev => ({ ...prev, current: i + 1 }));
             }
-            await syncLibrary((track) => {
-              setLibrary(prev => {
-                const prevMap = new Map(prev.map(t => [t.id, t]));
-                prevMap.set(track.id, track);
-                return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
-              });
-            });
+            // Incremental final sync with real-time UI updates
+            let syncCount = 0;
+            let currentSyncBatch: Track[] = [];
+            const SYNC_BATCH_SIZE = 25;
+
+            await syncLibrary(
+              (track) => {
+                syncCount++;
+                setScanProgress(prev => ({ ...prev, current: syncCount }));
+                currentSyncBatch.push(track);
+
+                if (currentSyncBatch.length >= SYNC_BATCH_SIZE) {
+                  const batchToProcess = [...currentSyncBatch];
+                  currentSyncBatch = [];
+                  setLibrary(prev => {
+                    const prevMap = new Map(prev.map(t => [t.id, t]));
+                    batchToProcess.forEach(t => prevMap.set(t.id, t));
+                    return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
+                  });
+                }
+              },
+              (total) => {
+                setScanProgress({ current: 0, total });
+              }
+            );
           }
         } catch (e) { console.error("Pick and Import failed:", e); }
         resolve();

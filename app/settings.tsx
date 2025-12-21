@@ -37,8 +37,12 @@ export default function SettingsScreen() {
         {isScanning && (
           <View style={styles.loadingContainer}>
             <View style={styles.loadingHeader}>
-              <Text style={styles.loadingTitle}>Processing Library...</Text>
-              <Text style={styles.loadingCount}>{scanProgress.current} / {scanProgress.total}</Text>
+              <Text style={styles.loadingTitle}>
+                {scanProgress.total === 0 ? "Discovering files..." : "Processing Library..."}
+              </Text>
+              {scanProgress.total > 0 && (
+                <Text style={styles.loadingCount}>{scanProgress.current} / {scanProgress.total}</Text>
+              )}
             </View>
             <View style={styles.progressBarBg}>
               <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />

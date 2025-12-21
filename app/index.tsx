@@ -161,6 +161,11 @@ export default function HomeScreen() {
       albums = albums.filter(a => a.name.toLowerCase().includes(lowerQuery));
     }
 
+    // Alphabetical Sorting (supports Chinese, Japanese, etc.)
+    songs.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+    artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
     return { songs, artists, albums };
   }, [library, searchQuery, showFavoritesOnly, favorites]);
 

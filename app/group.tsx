@@ -172,6 +172,20 @@ export default function GroupDetailScreen() {
       );
     }
 
+    // Sorting Logic
+    if (type === 'album') {
+      // Sort by track number if viewing a single album
+      filtered.sort((a, b) => {
+        if (a.trackNumber && b.trackNumber) return a.trackNumber - b.trackNumber;
+        if (a.trackNumber) return -1;
+        if (b.trackNumber) return 1;
+        return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+      });
+    } else {
+      // Default to alphabetical for Artists, Playlists, and mixed views
+      filtered.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+    }
+
     return filtered;
   }, [activeGroup, searchQuery, showFavoritesOnly, favorites]);
 

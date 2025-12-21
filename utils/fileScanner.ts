@@ -61,15 +61,27 @@ const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<s
 
     
 
-    const artist = metadata.common.artist || 'Unknown Artist';
-
-    const album = metadata.common.album || 'Unknown Album';
-
-    const title = metadata.common.title || fileName.replace(/\.[^/.]+$/, "");
+        const artist = metadata.common.artist || 'Unknown Artist';
 
     
 
-    let artworkUri: string | undefined = undefined;
+        const album = metadata.common.album || 'Unknown Album';
+
+    
+
+        const title = metadata.common.title || fileName.replace(/\.[^/.]+$/, "");
+
+    
+
+        const trackNumber = metadata.common.track.no || undefined;
+
+    
+
+        
+
+    
+
+        let artworkUri: string | undefined = undefined;
 
 
 
@@ -155,17 +167,31 @@ const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<s
 
     
 
-    return {
+        return {
 
-      title,
+    
 
-      artist,
+          title,
 
-      album,
+    
 
-      artwork: artworkUri
+          artist,
 
-    };
+    
+
+          album,
+
+    
+
+          artwork: artworkUri,
+
+    
+
+          trackNumber
+
+    
+
+        };
 
   } catch (e) {
 
@@ -187,19 +213,11 @@ const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<s
 
 
 
-export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: Track) => void): Promise<Track[]> => {
+export const discoverAudioFiles = async (folderUri: string): Promise<string[]> => {
 
 
 
-  const tracks: Track[] = [];
-
-
-
-  const processedUris = new Set<string>();
-
-
-
-  const albumArtCache = new Map<string, string>();
+  const audioFiles: string[] = [];
 
 
 
@@ -207,7 +225,7 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
 
 
 
-  const scanRecursive = async (uri: string) => {
+  const walk = async (uri: string) => {
 
 
 
@@ -228,22 +246,6 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
 
 
       const files = await FileSystem.readDirectoryAsync(uri);
-
-
-
-      const lrcMap = new Map<string, string>();
-
-
-
-      const audioFiles: string[] = [];
-
-
-
-      const subFolders: string[] = [];
-
-
-
-
 
 
 
@@ -275,31 +277,15 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
 
 
 
-            subFolders.push(fullUri);
+            await walk(fullUri);
 
 
 
-          } else {
+          } else if (AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext))) {
 
 
 
-            if (lowerName.endsWith('.lrc')) {
-
-
-
-              lrcMap.set(lowerName, fullUri);
-
-
-
-            } else if (AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext))) {
-
-
-
-              audioFiles.push(file);
-
-
-
-            }
+            audioFiles.push(fullUri);
 
 
 
@@ -307,15 +293,7 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
 
 
 
-        } catch (e) {
-
-
-
-          console.warn("Error getting file info:", fullUri, e);
-
-
-
-        }
+        } catch (e) {}
 
 
 
@@ -323,203 +301,7 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
 
 
 
-
-
-
-
-      for (const fileName of audioFiles) {
-
-
-
-        const fullUri = uri + (uri.endsWith('/') ? '' : '/') + fileName;
-
-
-
-        if (processedUris.has(fullUri)) continue;
-
-
-
-        processedUris.add(fullUri);
-
-
-
-
-
-
-
-        const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-
-
-
-        const potentialLrcKey = (nameWithoutExt + '.lrc').toLowerCase();
-
-
-
-        
-
-
-
-        let lrcContent = undefined;
-
-
-
-        const matchingLrcUri = lrcMap.get(potentialLrcKey);
-
-
-
-        if (matchingLrcUri) {
-
-
-
-          try {
-
-
-
-            lrcContent = await FileSystem.readAsStringAsync(matchingLrcUri);
-
-
-
-          } catch (e) {
-
-
-
-            console.log("Failed to read LRC:", matchingLrcUri);
-
-
-
-          }
-
-
-
-        }
-
-
-
-
-
-
-
-        const existingTrack = await getTrackById(fullUri);
-
-
-
-        let track: Track;
-
-
-
-
-
-
-
-        if (existingTrack) {
-
-
-
-          if (!existingTrack.lrc && lrcContent) {
-
-
-
-            existingTrack.lrc = lrcContent;
-
-
-
-          }
-
-
-
-          track = existingTrack;
-
-
-
-        } else {
-
-
-
-          const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
-
-
-
-          track = {
-
-
-
-            id: fullUri,
-
-
-
-            title: metadata.title,
-
-
-
-            artist: metadata.artist,
-
-
-
-            album: metadata.album,
-
-
-
-            uri: fullUri,
-
-
-
-            artwork: metadata.artwork,
-
-
-
-            lrc: lrcContent
-
-
-
-          };
-
-
-
-        }
-
-
-
-
-
-
-
-        tracks.push(track);
-
-
-
-        if (onTrackProcessed) onTrackProcessed(track);
-
-
-
-      }
-
-
-
-
-
-
-
-      for (const subFolder of subFolders) {
-
-
-
-        await scanRecursive(subFolder);
-
-
-
-      }
-
-
-
-    } catch (error) {
-
-
-
-      console.error("Error scanning recursive:", uri, error);
-
-
-
-    }
+    } catch (e) {}
 
 
 
@@ -531,7 +313,231 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
 
 
 
-  await scanRecursive(folderUri);
+  await walk(folderUri);
+
+
+
+  return audioFiles;
+
+
+
+};
+
+
+
+
+
+
+
+export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: Track) => void): Promise<Track[]> => {
+
+
+
+  const tracks: Track[] = [];
+
+
+
+  const albumArtCache = new Map<string, string>();
+
+
+
+  
+
+
+
+  // Quick discovery
+
+
+
+  const filePaths = await discoverAudioFiles(folderUri);
+
+
+
+  
+
+
+
+  // Process discovered files
+
+
+
+  for (const fullUri of filePaths) {
+
+
+
+    try {
+
+
+
+      const fileName = fullUri.split('/').pop() || "";
+
+
+
+      const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+
+
+
+      const dirPath = fullUri.substring(0, fullUri.lastIndexOf('/') + 1);
+
+
+
+      
+
+
+
+      // Try to find LRC in the same directory
+
+
+
+      const lrcUri = dirPath + nameWithoutExt + '.lrc';
+
+
+
+      let lrcContent = undefined;
+
+
+
+      try {
+
+
+
+        const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
+
+
+
+        if (lrcInfo.exists) {
+
+
+
+          lrcContent = await FileSystem.readAsStringAsync(lrcUri);
+
+
+
+        }
+
+
+
+      } catch (e) {}
+
+
+
+
+
+
+
+      const existingTrack = await getTrackById(fullUri);
+
+
+
+      let track: Track;
+
+
+
+
+
+
+
+      if (existingTrack) {
+
+
+
+        if (!existingTrack.lrc && lrcContent) {
+
+
+
+          existingTrack.lrc = lrcContent;
+
+
+
+        }
+
+
+
+        track = existingTrack;
+
+
+
+      } else {
+
+
+
+        const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
+
+
+
+                  track = {
+
+
+
+                    id: fullUri,
+
+
+
+                    title: metadata.title,
+
+
+
+                    artist: metadata.artist,
+
+
+
+                    album: metadata.album,
+
+
+
+                    uri: fullUri,
+
+
+
+                    artwork: metadata.artwork,
+
+
+
+                    lrc: lrcContent,
+
+
+
+                    trackNumber: metadata.trackNumber
+
+
+
+                  };
+
+
+
+      }
+
+
+
+
+
+
+
+      tracks.push(track);
+
+
+
+      if (onTrackProcessed) onTrackProcessed(track);
+
+
+
+    } catch (error) {
+
+
+
+      console.error("Error processing file:", fullUri, error);
+
+
+
+    }
+
+
+
+  }
+
+
+
+
 
 
 

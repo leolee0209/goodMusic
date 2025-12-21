@@ -5,6 +5,7 @@ export interface Track {
   album?: string;
   uri: string;
   artwork?: string;
+  trackNumber?: number;
   lrc?: string; // Content of the LRC file
 }
 

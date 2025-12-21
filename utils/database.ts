@@ -18,7 +18,8 @@ export const initDatabase = async () => {
       uri TEXT NOT NULL,
       artwork TEXT,
       duration INTEGER,
-      lrc TEXT
+      lrc TEXT,
+      trackNumber INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_artist ON tracks(artist);
     CREATE INDEX IF NOT EXISTS idx_album ON tracks(album);
@@ -54,6 +55,15 @@ export const initDatabase = async () => {
       console.log("Migration (lrc column) already applied or failed:", e);
     }
   }
+
+  const hasTrackNumber = tableInfo.some(column => column.name === 'trackNumber');
+  if (!hasTrackNumber) {
+    try {
+      await db.execAsync("ALTER TABLE tracks ADD COLUMN trackNumber INTEGER");
+    } catch (e) {
+      console.log("Migration (trackNumber column) already applied or failed:", e);
+    }
+  }
   
   return db;
 };
@@ -66,8 +76,8 @@ export const insertTracks = async (tracks: Track[]) => {
   await database.withTransactionAsync(async () => {
     for (const track of tracks) {
       await database.runAsync(
-        `INSERT OR REPLACE INTO tracks (id, title, artist, album, uri, artwork, duration, lrc) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [track.id, track.title, track.artist, track.album || 'Unknown', track.uri, track.artwork || null, 0, track.lrc || null]
+        `INSERT OR REPLACE INTO tracks (id, title, artist, album, uri, artwork, duration, lrc, trackNumber) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [track.id, track.title, track.artist, track.album || 'Unknown', track.uri, track.artwork || null, 0, track.lrc || null, track.trackNumber || null]
       );
     }
   });
@@ -84,7 +94,8 @@ export const getAllTracks = async (): Promise<Track[]> => {
     album: row.album,
     uri: row.uri,
     artwork: row.artwork,
-    lrc: row.lrc || undefined
+    lrc: row.lrc || undefined,
+    trackNumber: row.trackNumber || undefined
   }));
 };
 
@@ -105,7 +116,8 @@ export const searchTracks = async (query: string): Promise<Track[]> => {
     album: row.album,
     uri: row.uri,
     artwork: row.artwork,
-    lrc: row.lrc || undefined
+    lrc: row.lrc || undefined,
+    trackNumber: row.trackNumber || undefined
   }));
 };
 
@@ -128,6 +140,12 @@ export const trackExists = async (id: string): Promise<boolean> => {
   return (row?.count ?? 0) > 0;
 };
 
+export const getAllTrackUris = async (): Promise<Set<string>> => {
+  const database = await initDatabase();
+  const rows = await database.getAllAsync<any>('SELECT uri FROM tracks');
+  return new Set(rows.map(row => row.uri));
+};
+
 export const getTrackById = async (id: string): Promise<Track | null> => {
   const database = await initDatabase();
   const row = await database.getFirstAsync<any>('SELECT * FROM tracks WHERE id = ?', [id]);
@@ -139,7 +157,8 @@ export const getTrackById = async (id: string): Promise<Track | null> => {
     album: row.album,
     uri: row.uri,
     artwork: row.artwork,
-    lrc: row.lrc || undefined
+    lrc: row.lrc || undefined,
+    trackNumber: row.trackNumber || undefined
   };
 };
 
@@ -204,7 +223,8 @@ export const getPlaylistTracks = async (playlistId: string): Promise<Track[]> =>
     album: row.album,
     uri: row.uri,
     artwork: row.artwork,
-    lrc: row.lrc || undefined
+    lrc: row.lrc || undefined,
+    trackNumber: row.trackNumber || undefined
   }));
 };
 
