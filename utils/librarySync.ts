@@ -1,57 +1,34 @@
-import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
-import { insertTracks, getTrackById } from './database';
+import { insertTracks, getAllTracks, deleteTrack } from './database';
 import { Track } from '../types';
-import { Platform } from 'react-native';
 import { scanFolder } from './fileScanner';
 
 export const syncLibrary = async () => {
   try {
     const tracks: Track[] = [];
+    const internalMusicDir = FileSystem.documentDirectory + 'music/';
 
-    // 1. Media Library (OS Index)
-    const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status === 'granted') {
-      let hasNextPage = true;
-      let endCursor = '';
+    // Ensure the directory exists
+    const dirInfo = await FileSystem.getInfoAsync(internalMusicDir);
+    if (!dirInfo.exists) {
+      await FileSystem.makeDirectoryAsync(internalMusicDir, { intermediates: true });
+    }
 
-      while (hasNextPage) {
-        const assets = await MediaLibrary.getAssetsAsync({
-          mediaType: 'audio',
-          first: 100,
-          after: endCursor,
-        });
+    // 1. Scan the internal app storage
+    const internalTracks = await scanFolder(internalMusicDir);
+    tracks.push(...internalTracks);
 
-        for (const asset of assets.assets) {
-          const existing = await getTrackById(asset.id);
-          if (existing) {
-            tracks.push(existing);
-          } else {
-            tracks.push({
-              id: asset.id,
-              title: asset.filename.replace(/\.[^/.]+$/, ""),
-              artist: 'Unknown Artist',
-              album: 'Unknown Album',
-              uri: asset.uri,
-              artwork: undefined,
-            });
-          }
-        }
-
-        hasNextPage = assets.hasNextPage;
-        endCursor = assets.endCursor;
+    // 2. Cleanup non-existent files from DB
+    const dbTracks = await getAllTracks();
+    const foundUris = new Set(tracks.map(t => t.uri));
+    
+    for (const dbTrack of dbTracks) {
+      if (!foundUris.has(dbTrack.uri)) {
+        await deleteTrack(dbTrack.id);
       }
     }
 
-    // 2. Local Documents (Imported Files)
-    const docUri = (FileSystem as any).documentDirectory;
-    if (docUri) {
-      const docTracks = await scanFolder(docUri);
-      tracks.push(...docTracks);
-    }
-
-    // 3. Batch Upsert
-    // We don't clear anymore to support incremental sync
+    // 3. Batch Upsert new/updated tracks
     await insertTracks(tracks);
     
     return tracks;

@@ -12,6 +12,7 @@ interface TrackActionSheetProps {
   onGoToArtist: () => void;
   onGoToAlbum: () => void;
   onRemoveFromPlaylist?: () => void;
+  onRemoveFromLibrary?: () => void;
 }
 
 export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
@@ -22,7 +23,8 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
   onAddToPlaylist,
   onGoToArtist,
   onGoToAlbum,
-  onRemoveFromPlaylist
+  onRemoveFromPlaylist,
+  onRemoveFromLibrary
 }) => {
   if (!track) return null;
 
@@ -43,16 +45,6 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
           </View>
 
           <ScrollView style={styles.optionsList}>
-            {onRemoveFromPlaylist && (
-              <>
-                <TouchableOpacity style={styles.option} onPress={onRemoveFromPlaylist}>
-                  <Ionicons name="trash-outline" size={22} color="#ff4444" />
-                  <Text style={[styles.optionText, { color: '#ff4444' }]}>Remove from Playlist</Text>
-                </TouchableOpacity>
-                <View style={styles.divider} />
-              </>
-            )}
-
             <TouchableOpacity style={styles.option} onPress={onGoToArtist}>
               <Ionicons name="person-outline" size={22} color="#fff" />
               <Text style={styles.optionText}>Go to Artist</Text>
@@ -61,6 +53,20 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
             <TouchableOpacity style={styles.option} onPress={onGoToAlbum}>
               <Ionicons name="disc-outline" size={22} color="#fff" />
               <Text style={styles.optionText}>Go to Album</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            {onRemoveFromPlaylist && (
+              <TouchableOpacity style={styles.option} onPress={onRemoveFromPlaylist}>
+                <Ionicons name="trash-outline" size={22} color="#ff4444" />
+                <Text style={[styles.optionText, { color: '#ff4444' }]}>Remove from Playlist</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity style={styles.option} onPress={onRemoveFromLibrary}>
+              <Ionicons name="trash-outline" size={22} color="#ff4444" />
+              <Text style={[styles.optionText, { color: '#ff4444' }]}>Remove from Library</Text>
             </TouchableOpacity>
 
             <View style={styles.divider} />

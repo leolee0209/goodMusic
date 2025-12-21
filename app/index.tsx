@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Dimensions, Alert, Platform } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
@@ -7,7 +7,6 @@ import { DUMMY_PLAYLIST } from '../constants/dummyData';
 import { Track, PlaybackOrigin } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
-import { SettingsModal } from '../components/SettingsModal';
 import { TrackActionSheet } from '../components/TrackActionSheet';
 
 type Tab = 'songs' | 'artists' | 'albums' | 'playlists';
@@ -15,11 +14,10 @@ type Tab = 'songs' | 'artists' | 'albums' | 'playlists';
 export default function HomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string; f?: string }>();
-  const { playTrack, currentTrack, isPlaying, setPlaylist, togglePlayPause, favorites, refreshLibrary, library, importLocalFolder, pickAndImportFiles, playlists, createPlaylist, playbackOrigin, addToPlaylist } = useMusic();
+  const { playTrack, currentTrack, isPlaying, togglePlayPause, favorites, library, playlists, createPlaylist, addToPlaylist, removeTrack } = useMusic();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('songs');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  const [settingsVisible, setSettingsVisible] = useState(false);
 
   // Selection Mode State
   const [selectedTracks, setSelectedTracks] = useState<string[]>([]);
@@ -29,7 +27,7 @@ export default function HomeScreen() {
   const [actionSheetVisible, setActionSheetVisible] = useState(false);
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
 
-  // Handle incoming search query or favorites filter from Group/Player screen
+  // Handle incoming search query or favorites filter
   useEffect(() => {
     if (params.q) {
       setSearchQuery(params.q);
@@ -88,6 +86,26 @@ export default function HomeScreen() {
     }
   };
 
+  const handleActionSheetRemoveFromLibrary = () => {
+    if (!activeTrack) return;
+    
+    Alert.alert(
+      "Remove from Library",
+      `Are you sure you want to delete "${activeTrack.title}"? This will also delete the file from your device.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive", 
+          onPress: async () => {
+            await removeTrack(activeTrack.id);
+            setActionSheetVisible(false);
+          } 
+        }
+      ]
+    );
+  };
+
   const goToArtist = (artist: string) => {
     setActionSheetVisible(false);
     router.push({
@@ -106,18 +124,13 @@ export default function HomeScreen() {
 
   // Unified Grouping & Search Logic
   const groupedLibrary = useMemo(() => {
-    // baseSongs is for the 'Songs' tab and general display
     let baseSongs = [...library];
-
     if (showFavoritesOnly) {
       baseSongs = baseSongs.filter(track => favorites.includes(track.id));
     }
 
     const lowerQuery = searchQuery.toLowerCase().trim();
     const isSearching = lowerQuery !== '';
-
-    // ALWAYS use the full library (unfiltered by search) for the Artist/Album map construction
-    // so the tabs remain populated, UNLESS we are specifically searching.
     const mappingSource = isSearching ? baseSongs : library;
 
     const artistsMap: Record<string, Track[]> = {};
@@ -126,15 +139,12 @@ export default function HomeScreen() {
     mappingSource.forEach(track => {
       const artist = track.artist || 'Unknown Artist';
       const album = track.album || 'Unknown Album';
-      
       if (!artistsMap[artist]) artistsMap[artist] = [];
       artistsMap[artist].push(track);
-
       if (!albumsMap[album]) albumsMap[album] = [];
       albumsMap[album].push(track);
     });
 
-    // Songs: search in title, artist, or album
     let songs = isSearching 
       ? baseSongs.filter(track => 
           track.title.toLowerCase().includes(lowerQuery) || 
@@ -143,7 +153,6 @@ export default function HomeScreen() {
         )
       : baseSongs;
 
-    // Artists/Albums: Filtered by name ONLY when searching
     let artists = Object.entries(artistsMap).map(([name, tracks]) => ({ name, tracks, id: `artist-${name}` }));
     let albums = Object.entries(albumsMap).map(([name, tracks]) => ({ name, tracks, id: `album-${name}` }));
 
@@ -152,19 +161,8 @@ export default function HomeScreen() {
       albums = albums.filter(a => a.name.toLowerCase().includes(lowerQuery));
     }
 
-    return {
-      songs,
-      artists,
-      albums
-    };
+    return { songs, artists, albums };
   }, [library, searchQuery, showFavoritesOnly, favorites]);
-
-  // Initial Load
-  useEffect(() => {
-    if (library.length === 0) {
-       setPlaylist(DUMMY_PLAYLIST);
-    }
-  });
 
   const handleTrackPress = async (track: Track) => {
     if (currentTrack?.id === track.id) {
@@ -250,30 +248,11 @@ export default function HomeScreen() {
         </TouchableOpacity>
         
         <View style={styles.sideButtons}>
-          <TouchableOpacity 
-            style={styles.sideButton}
-            onPress={() => handleSingleTrackAction(item)}
-          >
+          <TouchableOpacity style={styles.sideButton} onPress={() => handleSingleTrackAction(item)}>
             <Ionicons name="ellipsis-vertical" size={20} color="#888" />
           </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.sideButton}
-            onPress={() => handleSideButtonPress(item)}
-          >
-            {isCurrent ? (
-              <Ionicons 
-                name={isPlaying ? "pause-circle" : "play-circle"} 
-                size={30} 
-                color="#1DB954" 
-              />
-            ) : (
-              <Ionicons 
-                name="play-circle-outline" 
-                size={30} 
-                color="#888" 
-              />
-            )}
+          <TouchableOpacity style={styles.sideButton} onPress={() => handleSideButtonPress(item)}>
+            <Ionicons name={isCurrent && isPlaying ? "pause-circle" : "play-circle-outline"} size={30} color={isCurrent ? "#1DB954" : "#888"} />
           </TouchableOpacity>
         </View>
       </View>
@@ -304,7 +283,6 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top Bar / Selection Bar */}
       {isSelectionMode ? (
         <View style={[styles.topBar, styles.selectionBar]}>
           <TouchableOpacity onPress={() => setSelectedTracks([])} style={styles.iconButton}>
@@ -317,33 +295,26 @@ export default function HomeScreen() {
         </View>
       ) : (
         <View style={styles.topBar}>
-          <TouchableOpacity onPress={() => setSettingsVisible(true)} style={styles.iconButton}>
+          <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconButton}>
             <Ionicons name="settings-outline" size={24} color="#fff" />
           </TouchableOpacity>
-
           <SearchBar 
             value={searchQuery}
             onChangeText={setSearchQuery}
             onClear={() => setSearchQuery('')}
             containerStyle={styles.mainSearchBar}
           />
-          
           <View style={styles.actionButtons}>
             <TouchableOpacity onPress={handleCreatePlaylist} style={styles.iconButton}>
               <Ionicons name="add-outline" size={28} color="#fff" />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowFavoritesOnly(!showFavoritesOnly)} style={styles.iconButton}>
-              <Ionicons 
-                name={showFavoritesOnly ? "heart" : "heart-outline"} 
-                size={24} 
-                color={showFavoritesOnly ? "#1DB954" : "#fff"} 
-              />
+              <Ionicons name={showFavoritesOnly ? "heart" : "heart-outline"} size={24} color={showFavoritesOnly ? "#1DB954" : "#fff"} />
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* Tabs */}
       {!isSearching && (
         <View style={styles.tabs}>
           {(['songs', 'artists', 'albums', 'playlists'] as Tab[]).map(tab => (
@@ -360,7 +331,6 @@ export default function HomeScreen() {
         </View>
       )}
       
-      {/* Content */}
       <View style={{ flex: 1 }}>
         {isSearching ? (
           <FlatList
@@ -376,76 +346,29 @@ export default function HomeScreen() {
             }}
             keyExtractor={(item: any) => item.id || (item.type + item.title + item.name)}
             contentContainerStyle={styles.listContent}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No results for "{searchQuery}"</Text>
-              </View>
-            }
           />
         ) : (
           <>
             {activeTab === 'songs' && (
-              <FlatList
-                data={groupedLibrary.songs}
-                renderItem={renderSongItem}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                  <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyText}>{showFavoritesOnly ? "No favorite songs yet" : "No songs found"}</Text>
-                  </View>
-                }
-              />
+              <FlatList data={groupedLibrary.songs} renderItem={renderSongItem} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
             )}
-
             {activeTab === 'artists' && (
-              <FlatList
-                data={groupedLibrary.artists}
-                renderItem={({ item }) => renderGroupItem({ item, type: 'artist' })}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-              />
+              <FlatList data={groupedLibrary.artists} renderItem={({ item }) => renderGroupItem({ item, type: 'artist' })} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
             )}
-
             {activeTab === 'albums' && (
-              <FlatList
-                data={groupedLibrary.albums}
-                renderItem={({ item }) => renderGroupItem({ item, type: 'album' })}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-              />
+              <FlatList data={groupedLibrary.albums} renderItem={({ item }) => renderGroupItem({ item, type: 'album' })} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
             )}
-
             {activeTab === 'playlists' && (
-              <FlatList
-                data={playlists}
-                renderItem={renderPlaylistItem}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                  <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyText}>No playlists created yet</Text>
-                  </View>
-                }
-              />
+              <FlatList data={playlists} renderItem={renderPlaylistItem} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
             )}
           </>
         )}
       </View>
 
-      {/* Mini Player */}
       {currentTrack && (
-        <TouchableOpacity 
-          style={styles.miniPlayer} 
-          onPress={() => router.push('/player')}
-          activeOpacity={0.9}
-        >
+        <TouchableOpacity style={styles.miniPlayer} onPress={() => router.push('/player')} activeOpacity={0.9}>
           <View style={styles.miniArtworkContainer}>
-             {currentTrack.artwork ? (
-               <Image source={{ uri: currentTrack.artwork }} style={styles.miniArtwork} />
-             ) : (
-               <Ionicons name="musical-note" size={20} color="#aaa" />
-             )}
+             {currentTrack.artwork ? <Image source={{ uri: currentTrack.artwork }} style={styles.miniArtwork} /> : <Ionicons name="musical-note" size={20} color="#aaa" />}
           </View>
           <View style={styles.miniInfo}>
             <Text style={styles.miniTitle} numberOfLines={1}>{currentTrack.title}</Text>
@@ -457,11 +380,6 @@ export default function HomeScreen() {
         </TouchableOpacity>
       )}
 
-      <SettingsModal 
-        visible={settingsVisible} 
-        onClose={() => setSettingsVisible(false)} 
-      />
-
       <TrackActionSheet
         visible={actionSheetVisible}
         onClose={() => setActionSheetVisible(false)}
@@ -470,223 +388,51 @@ export default function HomeScreen() {
         onAddToPlaylist={handleActionSheetAddToPlaylist}
         onGoToArtist={() => activeTrack && goToArtist(activeTrack.artist)}
         onGoToAlbum={() => activeTrack && activeTrack.album && goToAlbum(activeTrack.album)}
+        onRemoveFromLibrary={handleActionSheetRemoveFromLibrary}
       />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#121212',
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  selectionBar: {
-    backgroundColor: '#1DB954',
-    justifyContent: 'space-between',
-  },
-  selectionTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  mainSearchBar: {
-    flex: 1,
-    marginHorizontal: 10,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  iconButton: {
-    padding: 5,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  tabs: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    marginBottom: 10,
-  },
-  tab: {
-    marginRight: 20,
-    paddingBottom: 5,
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#1DB954',
-  },
-  tabText: {
-    color: '#888',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  activeTabText: {
-    color: '#fff',
-  },
-  listContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 100,
-  },
-  sectionHeader: {
-    color: '#1DB954',
-    fontSize: 14,
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
-    marginTop: 20,
-    marginBottom: 10,
-    letterSpacing: 1,
-  },
-  item: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    padding: 8,
-    borderRadius: 12,
-    backgroundColor: '#1E1E1E',
-  },
-  activeItem: {
-    backgroundColor: '#282828',
-    borderLeftWidth: 3,
-    borderLeftColor: '#1DB954',
-  },
-  selectedItem: {
-    backgroundColor: 'rgba(29, 185, 84, 0.1)',
-    borderColor: '#1DB954',
-    borderWidth: 1,
-  },
-  itemContent: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  artworkPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 6,
-    backgroundColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  selectedOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  artwork: {
-    width: '100%',
-    height: '100%',
-  },
-  info: {
-    flex: 1,
-    marginLeft: 15,
-  },
-  title: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  activeText: {
-    color: '#1DB954',
-  },
-  artist: {
-    color: '#aaa',
-    fontSize: 14,
-    marginTop: 2,
-  },
-  sideButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  sideButton: {
-    padding: 10,
-  },
-  groupItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#222',
-  },
-  groupIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
-    overflow: 'hidden',
-  },
-  groupTitle: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  groupSubtitle: {
-    color: '#888',
-    fontSize: 14,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    marginTop: 50,
-  },
-  emptyText: {
-    color: '#888',
-    fontSize: 16,
-  },
-  miniPlayer: {
-    position: 'absolute',
-    bottom: 20,
-    left: 10,
-    right: 10,
-    backgroundColor: '#282828',
-    padding: 10,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 8,
-  },
-  miniArtworkContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 4,
-    backgroundColor: '#333',
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
-  miniArtwork: {
-    width: '100%',
-    height: '100%',
-  },
-  miniInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  miniTitle: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  miniArtist: {
-    color: '#aaa',
-    fontSize: 12,
-  },
-  miniControls: {
-    paddingHorizontal: 10,
-  }
+  container: { flex: 1, backgroundColor: '#121212' },
+  topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 },
+  selectionBar: { backgroundColor: '#1DB954', justifyContent: 'space-between' },
+  selectionTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  mainSearchBar: { flex: 1, marginHorizontal: 10 },
+  actionButtons: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  iconButton: { padding: 5, justifyContent: 'center', alignItems: 'center' },
+  tabs: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 10 },
+  tab: { marginRight: 20, paddingBottom: 5 },
+  activeTab: { borderBottomWidth: 2, borderBottomColor: '#1DB954' },
+  tabText: { color: '#888', fontSize: 16, fontWeight: '600' },
+  activeTabText: { color: '#fff' },
+  listContent: { paddingHorizontal: 16, paddingBottom: 100 },
+  sectionHeader: { color: '#1DB954', fontSize: 14, fontWeight: 'bold', textTransform: 'uppercase', marginTop: 20, marginBottom: 10, letterSpacing: 1 },
+  item: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, padding: 8, borderRadius: 12, backgroundColor: '#1E1E1E' },
+  activeItem: { backgroundColor: '#282828', borderLeftWidth: 3, borderLeftColor: '#1DB954' },
+  selectedItem: { backgroundColor: 'rgba(29, 185, 84, 0.1)', borderColor: '#1DB954', borderWidth: 1 },
+  itemContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
+  artworkPlaceholder: { width: 50, height: 50, borderRadius: 6, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', position: 'relative' },
+  selectedOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  artwork: { width: '100%', height: '100%' },
+  info: { flex: 1, marginLeft: 15 },
+  title: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  activeText: { color: '#1DB954' },
+  artist: { color: '#aaa', fontSize: 14, marginTop: 2 },
+  sideButtons: { flexDirection: 'row', alignItems: 'center' },
+  sideButton: { padding: 10 },
+  groupItem: { flexDirection: 'row', alignItems: 'center', padding: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
+  groupIcon: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', marginRight: 15, overflow: 'hidden' },
+  groupTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  groupSubtitle: { color: '#888', fontSize: 14 },
+  emptyContainer: { alignItems: 'center', marginTop: 50 },
+  emptyText: { color: '#888', fontSize: 16 },
+  miniPlayer: { position: 'absolute', bottom: 20, left: 10, right: 10, backgroundColor: '#282828', padding: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', elevation: 8 },
+  miniArtworkContainer: { width: 40, height: 40, borderRadius: 4, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  miniArtwork: { width: '100%', height: '100%' },
+  miniInfo: { flex: 1, marginLeft: 12 },
+  miniTitle: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  miniArtist: { color: '#aaa', fontSize: 12 },
+  miniControls: { paddingHorizontal: 10 }
 });

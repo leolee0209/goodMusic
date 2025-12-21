@@ -37,6 +37,11 @@ export const initDatabase = async () => {
       FOREIGN KEY (playlistId) REFERENCES playlists(id) ON DELETE CASCADE,
       FOREIGN KEY (trackId) REFERENCES tracks(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS added_folders (
+      uri TEXT PRIMARY KEY NOT NULL,
+      addedAt INTEGER NOT NULL
+    );
   `);
 
   // Migration: Add lrc column if it doesn't exist (for existing users)
@@ -107,6 +112,11 @@ export const searchTracks = async (query: string): Promise<Track[]> => {
 export const clearLibrary = async () => {
   const database = await initDatabase();
   await database.runAsync('DELETE FROM tracks');
+};
+
+export const deleteTrack = async (id: string) => {
+  const database = await initDatabase();
+  await database.runAsync('DELETE FROM tracks WHERE id = ?', [id]);
 };
 
 export const trackExists = async (id: string): Promise<boolean> => {
@@ -201,4 +211,18 @@ export const getPlaylistTracks = async (playlistId: string): Promise<Track[]> =>
 export const deletePlaylist = async (playlistId: string) => {
   const database = await initDatabase();
   await database.runAsync('DELETE FROM playlists WHERE id = ?', [playlistId]);
+};
+
+export const insertFolder = async (uri: string) => {
+  const database = await initDatabase();
+  await database.runAsync(
+    'INSERT OR IGNORE INTO added_folders (uri, addedAt) VALUES (?, ?)',
+    [uri, Date.now()]
+  );
+};
+
+export const getFolders = async (): Promise<string[]> => {
+  const database = await initDatabase();
+  const rows = await database.getAllAsync<any>('SELECT uri FROM added_folders');
+  return rows.map(row => row.uri);
 };

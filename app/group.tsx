@@ -11,7 +11,7 @@ import { TrackActionSheet } from '../components/TrackActionSheet';
 export default function GroupDetailScreen() {
   const router = useRouter();
   const { title, type, id, f } = useLocalSearchParams<{ title: string; type: 'artist' | 'album' | 'playlist'; id?: string; f?: string }>();
-  const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites, playlists, addToPlaylist, removeFromPlaylist } = useMusic();
+  const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites, playlists, addToPlaylist, removeFromPlaylist, removeTrack } = useMusic();
   const [searchQuery, setSearchQuery] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(f === 'true');
   const [activeTab, setActiveTab] = useState<'songs' | 'albums'>('songs');
@@ -85,6 +85,26 @@ export default function GroupDetailScreen() {
       await loadPlaylistTracks(); // Refresh list
       setActionSheetVisible(false);
     }
+  };
+
+  const handleActionSheetRemoveFromLibrary = () => {
+    if (!activeTrack) return;
+    
+    Alert.alert(
+      "Remove from Library",
+      `Are you sure you want to delete "${activeTrack.title}"? This will also delete the file from your device.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { 
+          text: "Delete", 
+          style: "destructive", 
+          onPress: async () => {
+            await removeTrack(activeTrack.id);
+            setActionSheetVisible(false);
+          } 
+        }
+      ]
+    );
   };
 
   const goToArtist = (artist: string) => {
@@ -440,6 +460,7 @@ export default function GroupDetailScreen() {
         onGoToArtist={() => activeTrack && goToArtist(activeTrack.artist)}
         onGoToAlbum={() => activeTrack && activeTrack.album && goToAlbum(activeTrack.album)}
         onRemoveFromPlaylist={type === 'playlist' ? handleActionSheetRemoveFromPlaylist : undefined}
+        onRemoveFromLibrary={handleActionSheetRemoveFromLibrary}
       />
     </SafeAreaView>
   );

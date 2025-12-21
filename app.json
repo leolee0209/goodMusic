@@ -15,7 +15,6 @@
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true,
         "UIBackgroundModes": [
-          "audio",
           "audio"
         ],
         "ITSAppUsesNonExemptEncryption": false
@@ -65,6 +64,12 @@
       "eas": {
         "projectId": "e8aef7d1-381a-4708-91a7-c77f8b25e26c"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/e8aef7d1-381a-4708-91a7-c77f8b25e26c"
     }
   }
 }

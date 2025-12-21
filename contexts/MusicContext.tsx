@@ -29,7 +29,42 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isShuffle, setIsShuffle] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
+
+  const updateQueue = useRef<Promise<void>>(Promise.resolve());
+
+  const queueTask = (task: () => Promise<void>) => {
+    updateQueue.current = updateQueue.current.then(async () => {
+      setIsScanning(true);
+      try {
+        await task();
+      } finally {
+        setIsScanning(false);
+        setScanProgress({ current: 0, total: 0 });
+      }
+    });
+  };
+
+  const removeTrack = async (trackId: string) => {
+    const track = library.find(t => t.id === trackId);
+    if (track) {
+      try {
+        // 1. Remove from DB
+        await import('../utils/database').then(m => m.deleteTrack(trackId));
+        // 2. Remove file
+        const fileInfo = await FileSystem.getInfoAsync(track.uri);
+        if (fileInfo.exists) {
+          await FileSystem.deleteAsync(track.uri);
+        }
+        // 3. Update state
+        await refreshLibrary();
+      } catch (e) {
+        console.error("Error removing track:", e);
+      }
+    }
+  };
   const [favorites, setFavorites] = useState<string[]>([]);
   const [showLyrics, setShowLyrics] = useState(false);
   
@@ -325,38 +360,83 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const refreshLibrary = async () => {
-    const syncedTracks = await syncLibrary();
-    if (Array.isArray(syncedTracks) && syncedTracks.length > 0) {
-       setLibrary(syncedTracks);
-       setPlaylist(syncedTracks);
-       setOriginalPlaylist(syncedTracks);
-    } else {
-       const dbTracks = await getAllTracks();
-       setLibrary(dbTracks);
-       setPlaylist(dbTracks);
-       setOriginalPlaylist(dbTracks);
-    }
+    return new Promise<void>((resolve) => {
+      queueTask(async () => {
+        const syncedTracks = await syncLibrary();
+        if (Array.isArray(syncedTracks) && syncedTracks.length > 0) {
+           setLibrary(syncedTracks);
+           setPlaylist(syncedTracks);
+           setOriginalPlaylist(syncedTracks);
+        } else {
+           const dbTracks = await getAllTracks();
+           setLibrary(dbTracks);
+           setPlaylist(dbTracks);
+           setOriginalPlaylist(dbTracks);
+        }
+        resolve();
+      });
+    });
   };
 
   const importLocalFolder = async () => {
-    if (Platform.OS === 'android') {
-      try {
-        const permissions = await (FileSystem as any).StorageAccessFramework.requestDirectoryPermissionsAsync();
-        if (permissions.granted) {
-          const uri = permissions.directoryUri;
-          const tracks = await import('../utils/fileScanner').then(m => m.scanFolder(uri));
-          
-          if (tracks.length > 0) {
-             await import('../utils/database').then(m => m.insertTracks(tracks));
-             refreshLibrary();
+    return new Promise<void>((resolve) => {
+      queueTask(async () => {
+        try {
+          const musicDir = FileSystem.documentDirectory + 'music/';
+          await FileSystem.makeDirectoryAsync(musicDir, { intermediates: true });
+
+          if (Platform.OS === 'android') {
+            const permissions = await (FileSystem as any).StorageAccessFramework.requestDirectoryPermissionsAsync();
+            if (permissions.granted) {
+              const uri = permissions.directoryUri;
+              const files = await (FileSystem as any).StorageAccessFramework.readDirectoryAsync(uri);
+              
+              setScanProgress({ current: 0, total: files.length });
+              for (let i = 0; i < files.length; i++) {
+                const fileUri = files[i];
+                const fileName = decodeURIComponent(fileUri).split('/').pop();
+                if (fileName) {
+                  await FileSystem.copyAsync({
+                    from: fileUri,
+                    to: musicDir + fileName
+                  });
+                }
+                setScanProgress(prev => ({ ...prev, current: i + 1 }));
+              }
+              const syncedTracks = await syncLibrary();
+              setLibrary(syncedTracks);
+            }
+          } else {
+            const result = await DocumentPicker.getDocumentAsync({
+              type: 'public.folder',
+              copyToCacheDirectory: false
+            });
+
+            if (!result.canceled && result.assets && result.assets.length > 0) {
+              const uri = result.assets[0].uri;
+              const files = await FileSystem.readDirectoryAsync(uri);
+              
+              setScanProgress({ current: 0, total: files.length });
+              for (let i = 0; i < files.length; i++) {
+                const fileName = files[i];
+                if (!fileName.startsWith('.')) {
+                  await FileSystem.copyAsync({
+                    from: uri + '/' + fileName,
+                    to: musicDir + fileName
+                  });
+                }
+                setScanProgress(prev => ({ ...prev, current: i + 1 }));
+              }
+              const syncedTracks = await syncLibrary();
+              setLibrary(syncedTracks);
+            }
           }
+        } catch (e) {
+          console.warn("Folder import error:", e);
         }
-      } catch (e) {
-        console.warn("Permission rejected or error", e);
-      }
-    } else {
-      refreshLibrary();
-    }
+        resolve();
+      });
+    });
   };
 
   const downloadDemoTrack = async () => {
@@ -383,32 +463,41 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const pickAndImportFiles = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['audio/*', 'application/octet-stream'],
-        multiple: true,
-        copyToCacheDirectory: true
-      });
-
-      if (!result.canceled) {
-        const destDir = (FileSystem as any).documentDirectory + 'Imported/';
-        const dirInfo = await FileSystem.getInfoAsync(destDir);
-        if (!dirInfo.exists) {
-          await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
-        }
-
-        for (const file of result.assets) {
-          const destUri = destDir + file.name;
-          await FileSystem.copyAsync({
-            from: file.uri,
-            to: destUri
+    return new Promise<void>((resolve) => {
+      queueTask(async () => {
+        try {
+          const result = await DocumentPicker.getDocumentAsync({
+            type: ['audio/*', 'application/octet-stream'],
+            multiple: true,
+            copyToCacheDirectory: true
           });
+
+          if (!result.canceled) {
+            const destDir = FileSystem.documentDirectory + 'music/';
+            const dirInfo = await FileSystem.getInfoAsync(destDir);
+            if (!dirInfo.exists) {
+              await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
+            }
+
+            setScanProgress({ current: 0, total: result.assets.length });
+            for (let i = 0; i < result.assets.length; i++) {
+              const file = result.assets[i];
+              const destUri = destDir + file.name;
+              await FileSystem.copyAsync({
+                from: file.uri,
+                to: destUri
+              });
+              setScanProgress(prev => ({ ...prev, current: i + 1 }));
+            }
+            const syncedTracks = await syncLibrary();
+            setLibrary(syncedTracks);
+          }
+        } catch (e) {
+          console.error("Pick and Import failed:", e);
         }
-        refreshLibrary();
-      }
-    } catch (e) {
-      console.error("Pick and Import failed:", e);
-    }
+        resolve();
+      });
+    });
   };
 
   return (
@@ -431,6 +520,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       toggleFavorite,
       toggleLyricsView,
       refreshLibrary,
+      removeTrack,
       importLocalFolder,
       downloadDemoTrack,
       pickAndImportFiles,
@@ -445,6 +535,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       removeFromPlaylist,
       deletePlaylist,
       loadPlaylists,
+      isScanning,
+      scanProgress,
     }}>
       {children}
     </MusicContext.Provider>

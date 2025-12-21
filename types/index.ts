@@ -42,10 +42,15 @@ export interface MusicContextType {
   toggleFavorite: (id: string) => void;
   toggleLyricsView: () => void;
   refreshLibrary: () => Promise<void>;
+  removeTrack: (trackId: string) => Promise<void>;
   importLocalFolder: () => Promise<void>;
   downloadDemoTrack: () => Promise<void>;
   pickAndImportFiles: () => Promise<void>;
   library: Track[];
+  
+  // Scan State
+  isScanning: boolean;
+  scanProgress: { current: number; total: number };
   playlist: Track[];
   setPlaylist: (tracks: Track[]) => void;
   queueTitle: string;
