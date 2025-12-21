@@ -3,7 +3,7 @@ import { insertTracks, getAllTracks, deleteTrack } from './database';
 import { Track } from '../types';
 import { scanFolder } from './fileScanner';
 
-export const syncLibrary = async () => {
+export const syncLibrary = async (onTrackProcessed?: (track: Track) => void) => {
   try {
     const tracks: Track[] = [];
     const internalMusicDir = FileSystem.documentDirectory + 'music/';
@@ -14,8 +14,10 @@ export const syncLibrary = async () => {
       await FileSystem.makeDirectoryAsync(internalMusicDir, { intermediates: true });
     }
 
-    // 1. Scan the internal app storage
-    const internalTracks = await scanFolder(internalMusicDir);
+    // 1. Scan the internal app storage with callback
+    const internalTracks = await scanFolder(internalMusicDir, (track) => {
+      if (onTrackProcessed) onTrackProcessed(track);
+    });
     tracks.push(...internalTracks);
 
     // 2. Cleanup non-existent files from DB
@@ -28,7 +30,7 @@ export const syncLibrary = async () => {
       }
     }
 
-    // 3. Batch Upsert new/updated tracks
+    // 3. Batch Upsert new/updated tracks to ensure DB is final
     await insertTracks(tracks);
     
     return tracks;

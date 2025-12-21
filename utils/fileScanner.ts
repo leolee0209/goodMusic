@@ -187,462 +187,364 @@ const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<s
 
 
 
-export const scanFolder = async (folderUri: string): Promise<Track[]> => {
+export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: Track) => void): Promise<Track[]> => {
+
+
 
   const tracks: Track[] = [];
 
+
+
   const processedUris = new Set<string>();
 
-  const albumArtCache = new Map<string, string>(); // Cache album art per scan session
+
+
+  const albumArtCache = new Map<string, string>();
 
 
 
-  try {
 
-    // Android (SAF) vs iOS (Normal FileSystem)
 
-    if (Platform.OS === 'android' && folderUri.startsWith('content://')) {
 
-      const { StorageAccessFramework } = FileSystem as any;
 
-      const permissions = await StorageAccessFramework.readDirectoryAsync(folderUri);
+  const scanRecursive = async (uri: string) => {
 
-      
+
+
+    try {
+
+
+
+      const info = await FileSystem.getInfoAsync(uri);
+
+
+
+      if (!info.exists || !info.isDirectory) return;
+
+
+
+
+
+
+
+      const files = await FileSystem.readDirectoryAsync(uri);
+
+
+
+      const lrcMap = new Map<string, string>();
+
+
 
       const audioFiles: string[] = [];
 
-      const lrcFiles: string[] = [];
+
+
+      const subFolders: string[] = [];
 
 
 
-      for (const fileUri of permissions) {
 
-        const decodedUri = decodeURIComponent(fileUri);
 
-        const lower = decodedUri.toLowerCase();
+
+
+      for (const file of files) {
+
+
+
+        const fullUri = uri + (uri.endsWith('/') ? '' : '/') + file;
+
+
+
+        const lowerName = file.toLowerCase();
+
+
 
         
 
-        if (AUDIO_EXTENSIONS.some(ext => lower.endsWith(ext))) {
 
-          audioFiles.push(fileUri);
 
-        } else if (lower.endsWith('.lrc')) {
+        try {
 
-          lrcFiles.push(fileUri);
+
+
+          const fileInfo = await FileSystem.getInfoAsync(fullUri);
+
+
+
+          if (fileInfo.isDirectory) {
+
+
+
+            subFolders.push(fullUri);
+
+
+
+          } else {
+
+
+
+            if (lowerName.endsWith('.lrc')) {
+
+
+
+              lrcMap.set(lowerName, fullUri);
+
+
+
+            } else if (AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext))) {
+
+
+
+              audioFiles.push(file);
+
+
+
+            }
+
+
+
+          }
+
+
+
+        } catch (e) {
+
+
+
+          console.warn("Error getting file info:", fullUri, e);
+
+
 
         }
 
-      }
 
-      
-
-      // Match Audio and LRC
-
-      for (const audioUri of audioFiles) {
-
-        if (processedUris.has(audioUri)) continue;
-
-        processedUris.add(audioUri);
-
-
-
-        const audioName = decodeURIComponent(audioUri).split('/').pop() || "";
-
-        
-
-        // Find LRC
-
-        const nameWithoutExt = audioName.substring(0, audioName.lastIndexOf('.'));
-
-        const matchingLrcUri = lrcFiles.find(lrcUri => {
-
-          const lrcName = decodeURIComponent(lrcUri).split('/').pop() || "";
-
-          const lrcBase = lrcName.substring(0, lrcName.lastIndexOf('.'));
-
-          return lrcBase.toLowerCase() === nameWithoutExt.toLowerCase();
-
-        });
-
-
-
-                let lrcContent = undefined;
-
-
-
-                if (matchingLrcUri) {
-
-
-
-                  try {
-
-
-
-                    lrcContent = await FileSystem.readAsStringAsync(matchingLrcUri);
-
-
-
-                  } catch (e) {
-
-
-
-                    console.log("Failed to read LRC SAF:", matchingLrcUri);
-
-
-
-                  }
-
-
-
-                }
-
-
-
-        
-
-
-
-                        // --- Incremental Check ---
-
-
-
-        
-
-
-
-                        const existingTrack = await getTrackById(audioUri);
-
-
-
-        
-
-
-
-                        if (existingTrack) {
-
-
-
-        
-
-
-
-                          // If existing track is missing lyrics, but we found a matching LRC file, update it
-
-
-
-        
-
-
-
-                          if (!existingTrack.lrc && lrcContent) {
-
-
-
-        
-
-
-
-                            existingTrack.lrc = lrcContent;
-
-
-
-        
-
-
-
-                            // Note: insertTracks uses INSERT OR REPLACE, so this will update the DB
-
-
-
-        
-
-
-
-                          }
-
-
-
-        
-
-
-
-                          tracks.push(existingTrack);
-
-
-
-        
-
-
-
-                          continue;
-
-
-
-        
-
-
-
-                        }
-
-
-
-        
-
-
-
-                // Parse Metadata (Real ID3) for NEW tracks
-
-
-
-                const metadata = await parseMetadata(audioUri, audioName, albumArtCache);
-
-
-
-        
-
-
-
-                tracks.push({
-
-
-
-                  id: audioUri,
-
-
-
-                  title: metadata.title,
-
-
-
-                  artist: metadata.artist,
-
-
-
-                  album: metadata.album,
-
-
-
-                  uri: audioUri,
-
-
-
-                  artwork: metadata.artwork,
-
-
-
-                  lrc: lrcContent
-
-
-
-                });
 
       }
 
 
 
-    } else {
 
-      // iOS / Standard FileSystem
 
-      await scanFileSystemRecursively(folderUri, tracks, processedUris, albumArtCache);
+
+
+      for (const fileName of audioFiles) {
+
+
+
+        const fullUri = uri + (uri.endsWith('/') ? '' : '/') + fileName;
+
+
+
+        if (processedUris.has(fullUri)) continue;
+
+
+
+        processedUris.add(fullUri);
+
+
+
+
+
+
+
+        const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+
+
+
+        const potentialLrcKey = (nameWithoutExt + '.lrc').toLowerCase();
+
+
+
+        
+
+
+
+        let lrcContent = undefined;
+
+
+
+        const matchingLrcUri = lrcMap.get(potentialLrcKey);
+
+
+
+        if (matchingLrcUri) {
+
+
+
+          try {
+
+
+
+            lrcContent = await FileSystem.readAsStringAsync(matchingLrcUri);
+
+
+
+          } catch (e) {
+
+
+
+            console.log("Failed to read LRC:", matchingLrcUri);
+
+
+
+          }
+
+
+
+        }
+
+
+
+
+
+
+
+        const existingTrack = await getTrackById(fullUri);
+
+
+
+        let track: Track;
+
+
+
+
+
+
+
+        if (existingTrack) {
+
+
+
+          if (!existingTrack.lrc && lrcContent) {
+
+
+
+            existingTrack.lrc = lrcContent;
+
+
+
+          }
+
+
+
+          track = existingTrack;
+
+
+
+        } else {
+
+
+
+          const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
+
+
+
+          track = {
+
+
+
+            id: fullUri,
+
+
+
+            title: metadata.title,
+
+
+
+            artist: metadata.artist,
+
+
+
+            album: metadata.album,
+
+
+
+            uri: fullUri,
+
+
+
+            artwork: metadata.artwork,
+
+
+
+            lrc: lrcContent
+
+
+
+          };
+
+
+
+        }
+
+
+
+
+
+
+
+        tracks.push(track);
+
+
+
+        if (onTrackProcessed) onTrackProcessed(track);
+
+
+
+      }
+
+
+
+
+
+
+
+      for (const subFolder of subFolders) {
+
+
+
+        await scanRecursive(subFolder);
+
+
+
+      }
+
+
+
+    } catch (error) {
+
+
+
+      console.error("Error scanning recursive:", uri, error);
+
+
 
     }
 
-  } catch (error) {
 
-    console.error("Error scanning folder:", error);
 
-  }
+  };
+
+
+
+
+
+
+
+  await scanRecursive(folderUri);
 
 
 
   return tracks;
 
+
+
 };
 
 
 
-// --- iOS / Standard Logic ---
 
 
 
-const scanFileSystemRecursively = async (uri: string, tracks: Track[], processedUris: Set<string>, albumArtCache: Map<string, string>) => {
 
-  try {
-
-    const info = await FileSystem.getInfoAsync(uri);
-
-    if (!info.exists || !info.isDirectory) return;
-
-
-
-    const files = await FileSystem.readDirectoryAsync(uri);
-
-    
-
-    const lrcMap = new Map<string, string>();
-
-    const subFolders: string[] = [];
-
-    const audioFiles: string[] = [];
-
-
-
-    for (const file of files) {
-
-      const fullUri = uri + (uri.endsWith('/') ? '' : '/') + file;
-
-      const lowerName = file.toLowerCase();
-
-      
-
-      const fileInfo = await FileSystem.getInfoAsync(fullUri);
-
-      
-
-      if (fileInfo.isDirectory) {
-
-        subFolders.push(fullUri);
-
-      } else {
-
-        if (lowerName.endsWith('.lrc')) {
-
-          lrcMap.set(lowerName, file);
-
-        } else if (AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext))) {
-
-          audioFiles.push(file);
-
-        }
-
-      }
-
-    }
-
-
-
-    for (const fileName of audioFiles) {
-
-      const fullUri = uri + (uri.endsWith('/') ? '' : '/') + fileName;
-
-      if (processedUris.has(fullUri)) continue;
-
-      processedUris.add(fullUri);
-
-
-
-      const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-
-      const potentialLrcKey = (nameWithoutExt + '.lrc').toLowerCase();
-
-      
-
-      let lrcContent = undefined;
-
-      const originalLrcName = lrcMap.get(potentialLrcKey);
-
-      
-
-      if (originalLrcName) {
-
-        const lrcUri = uri + (uri.endsWith('/') ? '' : '/') + originalLrcName;
-
-        try {
-
-          lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-
-                } catch (e) {
-
-                  console.log("Failed to read LRC:", lrcUri);
-
-                }
-
-              }
-
-        
-
-                    // --- Incremental Check ---
-
-        
-
-                    const existingTrack = await getTrackById(fullUri);
-
-        
-
-                    if (existingTrack) {
-
-        
-
-                      // If existing track is missing lyrics, but we found a matching LRC file, update it
-
-        
-
-                      if (!existingTrack.lrc && lrcContent) {
-
-        
-
-                        existingTrack.lrc = lrcContent;
-
-        
-
-                      }
-
-        
-
-                      tracks.push(existingTrack);
-
-        
-
-                      continue;
-
-        
-
-                    }
-
-        
-
-              // Parse Metadata (Real ID3) for NEW tracks
-
-              const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
-
-        
-
-              tracks.push({
-
-                id: fullUri,
-
-                title: metadata.title,
-
-                artist: metadata.artist,
-
-                album: metadata.album,
-
-                uri: fullUri,
-
-                artwork: metadata.artwork,
-
-                lrc: lrcContent
-
-              });
-
-    }
-
-
-
-    for (const folder of subFolders) {
-
-      await scanFileSystemRecursively(folder, tracks, processedUris, albumArtCache);
-
-    }
-
-
-
-  } catch (e) {
-
-    console.error("FS Scan Error:", e);
-
-  }
-
-};
+// Remove the old scanFileSystemRecursively as it's now merged into scanRecursive inside scanFolder
