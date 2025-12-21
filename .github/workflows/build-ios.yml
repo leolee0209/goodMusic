@@ -1,6 +1,6 @@
 name: Build Unsigned iOS IPA
 on:
-  workflow_dispatch: # Allows you to run this manually from the GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,31 +13,45 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Install Expo CLI
-        run: npm install -g expo-cli
-
       - name: Expo Prebuild
         run: npx expo prebuild --platform ios
 
-      - name: Build Archive (Unsigned)
+      - name: Install CocoaPods
         run: |
-          xcodebuild -workspace ios/*.xcworkspace \
-                     -scheme $(ls ios/*.xcodeproj | xargs basename -s .xcodeproj) \
+          cd ios
+          pod install
+          cd ..
+
+      - name: Build Unsigned IPA
+        run: |
+          # 1. Auto-detect the project name (Scheme)
+          SCHEME_NAME=$(ls ios/*.xcworkspace | xargs basename -s .xcworkspace)
+          echo "Building scheme: $SCHEME_NAME"
+
+          # 2. Run the build with strict "No Signing" flags
+          xcodebuild -workspace ios/$SCHEME_NAME.xcworkspace \
+                     -scheme "$SCHEME_NAME" \
                      -configuration Release \
                      -sdk iphoneos \
                      -archivePath $PWD/build/App.xcarchive \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" \
+                     CODE_SIGNING_ENTITLEMENTS="" \
+                     GCC_WARN_INHIBIT_ALL_WARNINGS=YES \
                      archive
 
       - name: Package IPA
         run: |
           mkdir -p Payload
+          # Copy the .app folder into the Payload folder
           cp -r build/App.xcarchive/Products/Applications/*.app Payload/
+          # Zip it up into an IPA
           zip -r goodMusic.ipa Payload
           
       - name: Upload Artifact
