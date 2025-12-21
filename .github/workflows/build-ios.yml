@@ -13,7 +13,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
@@ -29,12 +28,15 @@ jobs:
 
       - name: Build Unsigned IPA
         run: |
-          # 1. Auto-detect the project name (Scheme)
-          SCHEME_NAME=$(ls ios/*.xcworkspace | xargs basename -s .xcworkspace)
-          echo "Building scheme: $SCHEME_NAME"
+          # 1. Smarter detection: find the workspace that isn't a hidden data file
+          WORKSPACE_PATH=$(find ios -maxdepth 1 -name "*.xcworkspace" | head -n 1)
+          SCHEME_NAME=$(basename "$WORKSPACE_PATH" .xcworkspace)
+          
+          echo "Found Workspace: $WORKSPACE_PATH"
+          echo "Using Scheme: $SCHEME_NAME"
 
-          # 2. Run the build with strict "No Signing" flags
-          xcodebuild -workspace ios/$SCHEME_NAME.xcworkspace \
+          # 2. Build command
+          xcodebuild -workspace "$WORKSPACE_PATH" \
                      -scheme "$SCHEME_NAME" \
                      -configuration Release \
                      -sdk iphoneos \
@@ -49,9 +51,7 @@ jobs:
       - name: Package IPA
         run: |
           mkdir -p Payload
-          # Copy the .app folder into the Payload folder
           cp -r build/App.xcarchive/Products/Applications/*.app Payload/
-          # Zip it up into an IPA
           zip -r goodMusic.ipa Payload
           
       - name: Upload Artifact
