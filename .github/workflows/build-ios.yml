@@ -1,0 +1,47 @@
+name: Build Unsigned iOS IPA
+on:
+  workflow_dispatch: # Allows you to run this manually from the GitHub UI
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Expo CLI
+        run: npm install -g expo-cli
+
+      - name: Expo Prebuild
+        run: npx expo prebuild --platform ios
+
+      - name: Build Archive (Unsigned)
+        run: |
+          xcodebuild -workspace ios/*.xcworkspace \
+                     -scheme $(ls ios/*.xcodeproj | xargs basename -s .xcodeproj) \
+                     -configuration Release \
+                     -sdk iphoneos \
+                     -archivePath $PWD/build/App.xcarchive \
+                     CODE_SIGNING_ALLOWED=NO \
+                     CODE_SIGNING_REQUIRED=NO \
+                     archive
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -r build/App.xcarchive/Products/Applications/*.app Payload/
+          zip -r MahjongPlayer.ipa Payload
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mahjong-ipa
+          path: MahjongPlayer.ipa

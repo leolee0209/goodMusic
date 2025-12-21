@@ -10,12 +10,15 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.leo.goodMusic",
       "infoPlist": {
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true,
         "UIBackgroundModes": [
+          "audio",
           "audio"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -26,7 +29,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "output": "static",
@@ -52,6 +59,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e8aef7d1-381a-4708-91a7-c77f8b25e26c"
+      }
     }
   }
 }
