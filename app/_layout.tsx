@@ -12,13 +12,13 @@ export default function RootLayout() {
       <Stack screenOptions={{
         headerStyle: { backgroundColor: '#121212' },
         headerTintColor: '#fff',
-        contentStyle: { backgroundColor: '#121212' }
+        contentStyle: { backgroundColor: '#121212' },
+        headerShown: false
       }}>
-        <Stack.Screen name="index" options={{ title: "GoodMusic", headerShown: false }} />
+        <Stack.Screen name="index" options={{ title: "GoodMusic" }} />
         <Stack.Screen name="player" options={{ 
           presentation: 'modal',
-          title: 'Now Playing',
-          headerShown: false // We might want a custom header in the player
+          title: 'Now Playing'
         }} />
       </Stack>
     </MusicProvider>

@@ -1,6 +1,6 @@
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
-import { insertTracks, clearLibrary } from './database';
+import { insertTracks, getTrackById } from './database';
 import { Track } from '../types';
 import { Platform } from 'react-native';
 import { scanFolder } from './fileScanner';
@@ -23,14 +23,19 @@ export const syncLibrary = async () => {
         });
 
         for (const asset of assets.assets) {
-          tracks.push({
-            id: asset.id, // Use asset ID
-            title: asset.filename.replace(/\.[^/.]+$/, ""),
-            artist: 'Unknown Artist',
-            album: 'Unknown Album',
-            uri: asset.uri,
-            artwork: undefined,
-          });
+          const existing = await getTrackById(asset.id);
+          if (existing) {
+            tracks.push(existing);
+          } else {
+            tracks.push({
+              id: asset.id,
+              title: asset.filename.replace(/\.[^/.]+$/, ""),
+              artist: 'Unknown Artist',
+              album: 'Unknown Album',
+              uri: asset.uri,
+              artwork: undefined,
+            });
+          }
         }
 
         hasNextPage = assets.hasNextPage;
@@ -45,18 +50,14 @@ export const syncLibrary = async () => {
       tracks.push(...docTracks);
     }
 
-    // 3. Batch Insert
-    // We clear old data to avoid stale entries, or we could upsert.
-    // For a "Sync", clearing might be safer to remove deleted files, 
-    // but preserving ID3 cache would be better. 
-    // For now, fast & simple: Clear & Replace.
-    await clearLibrary();
+    // 3. Batch Upsert
+    // We don't clear anymore to support incremental sync
     await insertTracks(tracks);
     
     return tracks;
-
   } catch (e) {
     console.error("Library Sync Error:", e);
     return [];
   }
 };
+

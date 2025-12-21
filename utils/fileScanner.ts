@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { Track } from '../types';
 import * as mm from 'music-metadata-browser';
 import { Buffer } from 'buffer';
+import { getTrackById } from './database';
 
 const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg'];
 
@@ -266,47 +267,175 @@ export const scanFolder = async (folderUri: string): Promise<Track[]> => {
 
 
 
-        let lrcContent = undefined;
-
-        if (matchingLrcUri) {
-
-          try {
-
-            lrcContent = await FileSystem.readAsStringAsync(matchingLrcUri);
-
-          } catch (e) {
-
-            console.log("Failed to read LRC SAF:", matchingLrcUri);
-
-          }
-
-        }
+                let lrcContent = undefined;
 
 
 
-        // Parse Metadata (Real ID3)
-
-        const metadata = await parseMetadata(audioUri, audioName, albumArtCache);
+                if (matchingLrcUri) {
 
 
 
-        tracks.push({
+                  try {
 
-          id: audioUri,
 
-          title: metadata.title,
 
-          artist: metadata.artist,
+                    lrcContent = await FileSystem.readAsStringAsync(matchingLrcUri);
 
-          album: metadata.album,
 
-          uri: audioUri,
 
-          artwork: metadata.artwork,
+                  } catch (e) {
 
-          lrc: lrcContent
 
-        });
+
+                    console.log("Failed to read LRC SAF:", matchingLrcUri);
+
+
+
+                  }
+
+
+
+                }
+
+
+
+        
+
+
+
+                        // --- Incremental Check ---
+
+
+
+        
+
+
+
+                        const existingTrack = await getTrackById(audioUri);
+
+
+
+        
+
+
+
+                        if (existingTrack) {
+
+
+
+        
+
+
+
+                          // If existing track is missing lyrics, but we found a matching LRC file, update it
+
+
+
+        
+
+
+
+                          if (!existingTrack.lrc && lrcContent) {
+
+
+
+        
+
+
+
+                            existingTrack.lrc = lrcContent;
+
+
+
+        
+
+
+
+                            // Note: insertTracks uses INSERT OR REPLACE, so this will update the DB
+
+
+
+        
+
+
+
+                          }
+
+
+
+        
+
+
+
+                          tracks.push(existingTrack);
+
+
+
+        
+
+
+
+                          continue;
+
+
+
+        
+
+
+
+                        }
+
+
+
+        
+
+
+
+                // Parse Metadata (Real ID3) for NEW tracks
+
+
+
+                const metadata = await parseMetadata(audioUri, audioName, albumArtCache);
+
+
+
+        
+
+
+
+                tracks.push({
+
+
+
+                  id: audioUri,
+
+
+
+                  title: metadata.title,
+
+
+
+                  artist: metadata.artist,
+
+
+
+                  album: metadata.album,
+
+
+
+                  uri: audioUri,
+
+
+
+                  artwork: metadata.artwork,
+
+
+
+                  lrc: lrcContent
+
+
+
+                });
 
       }
 
@@ -424,39 +553,79 @@ const scanFileSystemRecursively = async (uri: string, tracks: Track[], processed
 
           lrcContent = await FileSystem.readAsStringAsync(lrcUri);
 
-        } catch (e) {
+                } catch (e) {
 
-          console.log("Failed to read LRC:", lrcUri);
+                  console.log("Failed to read LRC:", lrcUri);
 
-        }
+                }
 
-      }
+              }
 
+        
 
+                    // --- Incremental Check ---
 
-      // Parse Metadata (Real ID3)
+        
 
-      const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
+                    const existingTrack = await getTrackById(fullUri);
 
+        
 
+                    if (existingTrack) {
 
-      tracks.push({
+        
 
-        id: fullUri,
+                      // If existing track is missing lyrics, but we found a matching LRC file, update it
 
-        title: metadata.title,
+        
 
-        artist: metadata.artist,
+                      if (!existingTrack.lrc && lrcContent) {
 
-        album: metadata.album,
+        
 
-        uri: fullUri,
+                        existingTrack.lrc = lrcContent;
 
-        artwork: metadata.artwork,
+        
 
-        lrc: lrcContent
+                      }
 
-      });
+        
+
+                      tracks.push(existingTrack);
+
+        
+
+                      continue;
+
+        
+
+                    }
+
+        
+
+              // Parse Metadata (Real ID3) for NEW tracks
+
+              const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
+
+        
+
+              tracks.push({
+
+                id: fullUri,
+
+                title: metadata.title,
+
+                artist: metadata.artist,
+
+                album: metadata.album,
+
+                uri: fullUri,
+
+                artwork: metadata.artwork,
+
+                lrc: lrcContent
+
+              });
 
     }
 

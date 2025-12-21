@@ -21,14 +21,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [positionMillis, setPositionMillis] = useState(0);
   const [durationMillis, setDurationMillis] = useState(0);
   
+  const [library, setLibrary] = useState<Track[]>([]);
   const [playlist, setPlaylistState] = useState<Track[]>([]);
   const [originalPlaylist, setOriginalPlaylist] = useState<Track[]>([]);
+  const [queueTitle, setQueueTitle] = useState('All Songs');
   
   const [isShuffle, setIsShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [favorites, setFavorites] = useState<string[]>([]);
   const [showLyrics, setShowLyrics] = useState(false);
-  const [activeGroup, setActiveGroup] = useState<{ title: string; tracks: Track[] } | null>(null);
   
   const playerRef = useRef<AudioPlayer | null>(null);
 
@@ -73,6 +74,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const loadLibrary = async () => {
       await initDatabase();
       const tracks = await getAllTracks();
+      setLibrary(tracks);
       setPlaylist(tracks);
       setOriginalPlaylist(tracks);
     };
@@ -133,16 +135,49 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const playTrackInternal = async (track: Track) => {
     try {
       if (!playerRef.current) return;
+      
+      // Stop and replace
+      playerRef.current.pause();
       playerRef.current.replace(track.uri);
-      playerRef.current.play();
+      
+      // Update Lock Screen Metadata
+      if (playerRef.current && typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
+        (playerRef.current as any).setActiveForLockScreen(true, {
+          title: track.title,
+          artist: track.artist,
+          albumTitle: track.album || 'Unknown Album',
+          artworkUrl: track.artwork || undefined,
+        });
+      }
+
+      // Explicitly play and set state
       setCurrentTrack(track);
       setIsPlaying(true);
+      
+      // Some versions of expo-audio might need a tiny tick for replace to take effect
+      setTimeout(() => {
+        if (playerRef.current) {
+          playerRef.current.play();
+        }
+      }, 50);
+
     } catch (error) {
       console.error('Error playing track:', error);
     }
   };
 
-  const playTrack = async (track: Track) => {
+  const playTrack = async (track: Track, newQueue?: Track[], title?: string) => {
+    if (newQueue) {
+      setOriginalPlaylist(newQueue);
+      setQueueTitle(title || 'All Songs');
+      if (isShuffle) {
+        const others = newQueue.filter(t => t.id !== track.id);
+        const shuffledOthers = shuffleArray(others);
+        setPlaylistState([track, ...shuffledOthers]);
+      } else {
+        setPlaylistState(newQueue);
+      }
+    }
     playTrackInternal(track);
   };
 
@@ -212,6 +247,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (newShuffleState) {
       if (currentTrack && originalPlaylist.length > 0) {
+        // Keep current track at the top, shuffle the rest
         const others = originalPlaylist.filter(t => t.id !== currentTrack.id);
         const shuffledOthers = shuffleArray(others);
         setPlaylistState([currentTrack, ...shuffledOthers]);
@@ -219,6 +255,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
          setPlaylistState(shuffleArray(originalPlaylist));
       }
     } else {
+      // Revert to original order of the active context
       setPlaylistState(originalPlaylist);
     }
   };
@@ -260,10 +297,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshLibrary = async () => {
     const syncedTracks = await syncLibrary();
     if (Array.isArray(syncedTracks) && syncedTracks.length > 0) {
+       setLibrary(syncedTracks);
        setPlaylist(syncedTracks);
        setOriginalPlaylist(syncedTracks);
     } else {
        const dbTracks = await getAllTracks();
+       setLibrary(dbTracks);
        setPlaylist(dbTracks);
        setOriginalPlaylist(dbTracks);
     }
@@ -365,10 +404,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       importLocalFolder,
       downloadDemoTrack,
       pickAndImportFiles,
+      library,
       playlist,
       setPlaylist,
-      activeGroup,
-      setActiveGroup,
+      queueTitle,
     }}>
       {children}
     </MusicContext.Provider>

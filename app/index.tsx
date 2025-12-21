@@ -1,64 +1,88 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, TextInput, Dimensions, Alert, Platform } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Dimensions, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
 import { DUMMY_PLAYLIST } from '../constants/dummyData';
 import { Track } from '../types';
 import { Ionicons } from '@expo/vector-icons';
+import SearchBar from '../components/SearchBar';
 
 type Tab = 'songs' | 'artists' | 'albums';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { playTrack, currentTrack, isPlaying, setPlaylist, togglePlayPause, favorites, refreshLibrary, downloadDemoTrack, pickAndImportFiles, playlist, setActiveGroup, importLocalFolder } = useMusic();
+  const params = useLocalSearchParams<{ q?: string }>();
+  const { playTrack, currentTrack, isPlaying, setPlaylist, togglePlayPause, favorites, refreshLibrary, library, importLocalFolder, pickAndImportFiles } = useMusic();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('songs');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
-  // Grouping Logic
+  // Handle incoming search query from Group screen
+  useEffect(() => {
+    if (params.q) {
+      setSearchQuery(params.q);
+    }
+  }, [params.q]);
+
+  // Unified Grouping & Search Logic
   const groupedLibrary = useMemo(() => {
-    const source = playlist.length > 0 ? playlist : [];
-    
-    let filtered = source;
+    // baseSongs is for the 'Songs' tab and general display
+    let baseSongs = [...library];
 
     if (showFavoritesOnly) {
-      filtered = filtered.filter(track => favorites.includes(track.id));
+      baseSongs = baseSongs.filter(track => favorites.includes(track.id));
     }
 
-    if (searchQuery.trim() !== '') {
-      const lowerQuery = searchQuery.toLowerCase();
-      filtered = filtered.filter(track => 
-        track.title.toLowerCase().includes(lowerQuery) || 
-        track.artist.toLowerCase().includes(lowerQuery)
-      );
-    }
+    const lowerQuery = searchQuery.toLowerCase().trim();
+    const isSearching = lowerQuery !== '';
 
-    // Grouping
-    const artists: Record<string, Track[]> = {};
-    const albums: Record<string, Track[]> = {};
+    // ALWAYS use the full library (unfiltered by search) for the Artist/Album map construction
+    // so the tabs remain populated, UNLESS we are specifically searching.
+    const mappingSource = isSearching ? baseSongs : library;
 
-    filtered.forEach(track => {
+    const artistsMap: Record<string, Track[]> = {};
+    const albumsMap: Record<string, Track[]> = {};
+
+    mappingSource.forEach(track => {
       const artist = track.artist || 'Unknown Artist';
       const album = track.album || 'Unknown Album';
       
-      if (!artists[artist]) artists[artist] = [];
-      artists[artist].push(track);
+      if (!artistsMap[artist]) artistsMap[artist] = [];
+      artistsMap[artist].push(track);
 
-      if (!albums[album]) albums[album] = [];
-      albums[album].push(track);
+      if (!albumsMap[album]) albumsMap[album] = [];
+      albumsMap[album].push(track);
     });
 
+    // Songs: search in title, artist, or album
+    let songs = isSearching 
+      ? baseSongs.filter(track => 
+          track.title.toLowerCase().includes(lowerQuery) || 
+          track.artist.toLowerCase().includes(lowerQuery) ||
+          (track.album && track.album.toLowerCase().includes(lowerQuery))
+        )
+      : baseSongs;
+
+    // Artists/Albums: Filtered by name ONLY when searching
+    let artists = Object.entries(artistsMap).map(([name, tracks]) => ({ name, tracks, id: `artist-${name}` }));
+    let albums = Object.entries(albumsMap).map(([name, tracks]) => ({ name, tracks, id: `album-${name}` }));
+
+    if (isSearching) {
+      artists = artists.filter(a => a.name.toLowerCase().includes(lowerQuery));
+      albums = albums.filter(a => a.name.toLowerCase().includes(lowerQuery));
+    }
+
     return {
-      songs: filtered,
-      artists: Object.entries(artists).map(([name, tracks]) => ({ name, tracks, id: name })),
-      albums: Object.entries(albums).map(([name, tracks]) => ({ name, tracks, id: name }))
+      songs,
+      artists,
+      albums
     };
-  }, [playlist, searchQuery, showFavoritesOnly, favorites]);
+  }, [library, searchQuery, showFavoritesOnly, favorites]);
 
   // Initial Load
   useEffect(() => {
-    if (playlist.length === 0) {
+    if (library.length === 0) {
        setPlaylist(DUMMY_PLAYLIST);
     }
   }, []);
@@ -67,7 +91,8 @@ export default function HomeScreen() {
     if (currentTrack?.id === track.id) {
       router.push('/player');
     } else {
-      await playTrack(track);
+      const title = showFavoritesOnly ? 'Favorites' : (searchQuery ? `Search: ${searchQuery}` : 'All Songs');
+      await playTrack(track, groupedLibrary.songs, title);
       router.push('/player');
     }
   };
@@ -76,13 +101,16 @@ export default function HomeScreen() {
     if (currentTrack?.id === track.id) {
       await togglePlayPause();
     } else {
-      await playTrack(track);
+      const title = showFavoritesOnly ? 'Favorites' : (searchQuery ? `Search: ${searchQuery}` : 'All Songs');
+      await playTrack(track, groupedLibrary.songs, title);
     }
   };
 
-  const handleGroupPress = (group: { name: string, tracks: Track[] }) => {
-    setActiveGroup({ title: group.name, tracks: group.tracks });
-    router.push('/group');
+  const handleGroupPress = (group: { name: string, tracks: Track[] }, type: 'artist' | 'album') => {
+    router.push({
+      pathname: '/group',
+      params: { title: group.name, type }
+    });
   };
 
   const renderSongItem = ({ item }: { item: Track }) => {
@@ -131,7 +159,7 @@ export default function HomeScreen() {
   const renderGroupItem = ({ item, type }: { item: { name: string, tracks: Track[] }, type: 'artist' | 'album' }) => {
     const coverArt = item.tracks.find(t => t.artwork)?.artwork;
     return (
-      <TouchableOpacity style={styles.groupItem} onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks })}>
+      <TouchableOpacity style={styles.groupItem} onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}>
         <View style={styles.groupIcon}>
           {coverArt ? (
             <Image source={{ uri: coverArt }} style={styles.artwork} />
@@ -153,46 +181,25 @@ export default function HomeScreen() {
       "Import Music",
       "Add music to your library:",
       [
-        {
-          text: "Select Files (Multiple)",
-          onPress: pickAndImportFiles
-        },
-        {
-          text: "Scan Documents / Folder",
-          onPress: () => {
-             // For iOS, guide them. For Android, open picker.
-             // But my importLocalFolder handles logic. 
-             // On iOS it auto-scans docs. On Android it picks folder.
-             // I'll just call it directly for now or add the helpful alert if I want.
-             // Let's stick to the helpful alert logic I designed.
-             importLocalFolder();
-          }
-        },
+        { text: "Select Files (Multiple)", onPress: pickAndImportFiles },
+        { text: "Scan Documents / Folder", onPress: importLocalFolder },
         { text: "Cancel", style: "cancel" }
       ]
     );
   };
 
+  const isSearching = searchQuery.trim().length > 0;
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top Bar: Search & Actions */}
+      {/* Top Bar */}
       <View style={styles.topBar}>
-        <View style={styles.searchContainer}>
-          <Ionicons name="search" size={20} color="#888" style={styles.searchIcon} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search..."
-            placeholderTextColor="#888"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={20} color="#888" />
-            </TouchableOpacity>
-          )}
-        </View>
-
+        <SearchBar 
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          onClear={() => setSearchQuery('')}
+          containerStyle={styles.mainSearchBar}
+        />
         <View style={styles.actionButtons}>
           <TouchableOpacity onPress={refreshLibrary} style={styles.iconButton}>
             <Ionicons name="refresh-outline" size={22} color="#fff" />
@@ -210,57 +217,79 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Tabs */}
-      <View style={styles.tabs}>
-        {(['songs', 'artists', 'albums'] as Tab[]).map(tab => (
-          <TouchableOpacity 
-            key={tab} 
-            style={[styles.tab, activeTab === tab && styles.activeTab]}
-            onPress={() => setActiveTab(tab)}
-          >
-            <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {/* Tabs - Hidden when searching for a unified feel, or keep them for filtering */}
+      {!isSearching && (
+        <View style={styles.tabs}>
+          {(['songs', 'artists', 'albums'] as Tab[]).map(tab => (
+            <TouchableOpacity 
+              key={tab} 
+              style={[styles.tab, activeTab === tab && styles.activeTab]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
       
       {/* Content */}
       <View style={{ flex: 1 }}>
-        {activeTab === 'songs' && (
+        {isSearching ? (
           <FlatList
-            data={groupedLibrary.songs}
-            renderItem={renderSongItem}
-            keyExtractor={item => item.id}
+            data={[
+              ...(groupedLibrary.artists.length > 0 ? [{ type: 'header', title: 'Artists' }, ...groupedLibrary.artists.map(a => ({ ...a, type: 'artist' }))] : []),
+              ...(groupedLibrary.albums.length > 0 ? [{ type: 'header', title: 'Albums' }, ...groupedLibrary.albums.map(a => ({ ...a, type: 'album' }))] : []),
+              ...(groupedLibrary.songs.length > 0 ? [{ type: 'header', title: 'Songs' }, ...groupedLibrary.songs.map(s => ({ ...s, type: 'song' }))] : []),
+            ]}
+            renderItem={({ item }: any) => {
+              if (item.type === 'header') return <Text style={styles.sectionHeader}>{item.title}</Text>;
+              if (item.type === 'artist' || item.type === 'album') return renderGroupItem({ item, type: item.type });
+              return renderSongItem({ item });
+            }}
+            keyExtractor={(item: any) => item.id || (item.type + item.title + item.name)}
             contentContainerStyle={styles.listContent}
-            initialNumToRender={10}
-            windowSize={5}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No songs found</Text>
+                <Text style={styles.emptyText}>No results for "{searchQuery}"</Text>
               </View>
             }
           />
-        )}
+        ) : (
+          <>
+            {activeTab === 'songs' && (
+              <FlatList
+                data={groupedLibrary.songs}
+                renderItem={renderSongItem}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.listContent}
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>{showFavoritesOnly ? "No favorite songs yet" : "No songs found"}</Text>
+                  </View>
+                }
+              />
+            )}
 
-        {activeTab === 'artists' && (
-          <FlatList
-            data={groupedLibrary.artists}
-            renderItem={({ item }) => renderGroupItem({ item, type: 'artist' })}
-            keyExtractor={item => item.id}
-            contentContainerStyle={styles.listContent}
-            initialNumToRender={10}
-          />
-        )}
+            {activeTab === 'artists' && (
+              <FlatList
+                data={groupedLibrary.artists}
+                renderItem={({ item }) => renderGroupItem({ item, type: 'artist' })}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.listContent}
+              />
+            )}
 
-        {activeTab === 'albums' && (
-          <FlatList
-            data={groupedLibrary.albums}
-            renderItem={({ item }) => renderGroupItem({ item, type: 'album' })}
-            keyExtractor={item => item.id}
-            contentContainerStyle={styles.listContent}
-            initialNumToRender={10}
-          />
+            {activeTab === 'albums' && (
+              <FlatList
+                data={groupedLibrary.albums}
+                renderItem={({ item }) => renderGroupItem({ item, type: 'album' })}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.listContent}
+              />
+            )}
+          </>
         )}
       </View>
 
@@ -301,16 +330,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    // marginTop: 10, // Removed to avoid double padding with SafeAreaView
   },
-  searchContainer: {
+  mainSearchBar: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#282828',
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    height: 40,
     marginRight: 10,
   },
   actionButtons: {
@@ -322,15 +344,6 @@ const styles = StyleSheet.create({
     padding: 5,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 16,
-    height: '100%',
   },
   tabs: {
     flexDirection: 'row',
@@ -356,6 +369,15 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 16,
     paddingBottom: 100,
+  },
+  sectionHeader: {
+    color: '#1DB954',
+    fontSize: 14,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    marginTop: 20,
+    marginBottom: 10,
+    letterSpacing: 1,
   },
   item: {
     flexDirection: 'row',

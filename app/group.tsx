@@ -1,23 +1,80 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
 import { Track } from '../types';
 import { Ionicons } from '@expo/vector-icons';
+import SearchBar from '../components/SearchBar';
 
 export default function GroupDetailScreen() {
   const router = useRouter();
-  const { activeGroup, playTrack, currentTrack, isPlaying, togglePlayPause } = useMusic();
+  const { title, type } = useLocalSearchParams<{ title: string; type: 'artist' | 'album' }>();
+  const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites } = useMusic();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [activeTab, setActiveTab] = useState<'songs' | 'albums'>('songs');
+
+  // Derive activeGroup from title and type params using the full library
+  const activeGroup = useMemo(() => {
+    if (!title || !type) return null;
+    const tracks = library.filter(track => {
+      if (type === 'artist') return track.artist === title;
+      if (type === 'album') return track.album === title;
+      return false;
+    });
+    return { title, tracks, type };
+  }, [library, title, type]);
+
+  const handleBack = () => {
+    router.back();
+  };
+
+  const artistAlbums = useMemo(() => {
+    if (!activeGroup || activeGroup.type !== 'artist') return [];
+    
+    const albumsMap: Record<string, Track[]> = {};
+    activeGroup.tracks.forEach(track => {
+      const album = track.album || 'Unknown Album';
+      if (!albumsMap[album]) albumsMap[album] = [];
+      albumsMap[album].push(track);
+    });
+
+    return Object.entries(albumsMap).map(([name, tracks]) => ({
+      name,
+      tracks,
+      id: `album-${name}`
+    }));
+  }, [activeGroup]);
+
+  const filteredTracks = useMemo(() => {
+    if (!activeGroup) return [];
+    let filtered = activeGroup.tracks;
+
+    if (showFavoritesOnly) {
+      filtered = filtered.filter(track => favorites.includes(track.id));
+    }
+
+    if (searchQuery.trim() !== '') {
+      const lowerQuery = searchQuery.toLowerCase();
+      filtered = filtered.filter(track => 
+        track.title.toLowerCase().includes(lowerQuery) || 
+        track.artist.toLowerCase().includes(lowerQuery) ||
+        (track.album && track.album.toLowerCase().includes(lowerQuery))
+      );
+    }
+
+    return filtered;
+  }, [activeGroup, searchQuery, showFavoritesOnly, favorites]);
 
   if (!activeGroup) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <Text style={styles.errorText}>No group selected</Text>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={handleBack}>
           <Text style={styles.backButton}>Go Back</Text>
         </TouchableOpacity>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -25,7 +82,7 @@ export default function GroupDetailScreen() {
     if (currentTrack?.id === track.id) {
       router.push('/player');
     } else {
-      await playTrack(track);
+      await playTrack(track, filteredTracks, activeGroup.title);
       router.push('/player');
     }
   };
@@ -34,11 +91,29 @@ export default function GroupDetailScreen() {
     if (currentTrack?.id === track.id) {
       await togglePlayPause();
     } else {
-      await playTrack(track);
+      await playTrack(track, filteredTracks, activeGroup.title);
     }
   };
 
-  const renderItem = ({ item }: { item: Track }) => {
+  const handleAlbumPress = (album: { name: string, tracks: Track[] }) => {
+    // Push new screen with params for animation and history
+    router.push({
+      pathname: '/group',
+      params: { title: album.name, type: 'album' }
+    });
+  };
+
+  const groupArtwork = activeGroup.tracks.find(t => t.artwork)?.artwork;
+
+  const handleSearchGlobally = () => {
+    // Navigate to index with the search query
+    router.replace({
+      pathname: '/',
+      params: { q: searchQuery }
+    });
+  };
+
+  const renderTrackItem = ({ item }: { item: Track }) => {
     const isCurrent = currentTrack?.id === item.id;
     return (
       <View style={[styles.item, isCurrent && styles.activeItem]}>
@@ -81,21 +156,129 @@ export default function GroupDetailScreen() {
     );
   };
 
+  const renderAlbumItem = ({ item }: { item: { name: string, tracks: Track[] } }) => {
+    const coverArt = item.tracks.find(t => t.artwork)?.artwork;
+    return (
+      <TouchableOpacity style={styles.albumItem} onPress={() => handleAlbumPress(item)}>
+        <View style={styles.albumIcon}>
+          {coverArt ? (
+            <Image source={{ uri: coverArt }} style={styles.artwork} />
+          ) : (
+            <Ionicons name="disc" size={24} color="#fff" />
+          )}
+        </View>
+        <View style={styles.info}>
+          <Text style={styles.albumTitle}>{item.name}</Text>
+          <Text style={styles.albumSubtitle}>{item.tracks.length} songs</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color="#666" />
+      </TouchableOpacity>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backIcon}>
-          <Ionicons name="chevron-back" size={28} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>{activeGroup.title}</Text>
+      {/* Hero Header */}
+      <View style={styles.heroContainer}>
+        {groupArtwork ? (
+          <Image 
+            source={{ uri: groupArtwork }} 
+            style={styles.heroImage} 
+            blurRadius={activeGroup.type === 'artist' ? 20 : 0} 
+          />
+        ) : (
+          <View style={[styles.heroImage, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }]}>
+            <Ionicons name={activeGroup.type === 'artist' ? 'person' : 'disc'} size={80} color="#555" />
+          </View>
+        )}
+        <View style={styles.heroOverlay} />
+        
+        {/* Floating Top Controls */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={handleBack} style={styles.backIcon}>
+            <Ionicons name="chevron-back" size={28} color="#fff" />
+          </TouchableOpacity>
+          
+          <SearchBar 
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onClear={() => setSearchQuery('')}
+            placeholder={`Search ${activeGroup.type}...`}
+            containerStyle={styles.headerSearchBar}
+          />
+          
+          <TouchableOpacity 
+            onPress={() => setShowFavoritesOnly(!showFavoritesOnly)} 
+            style={styles.favoriteToggle}
+          >
+            <Ionicons 
+              name={showFavoritesOnly ? "heart" : "heart-outline"} 
+              size={24} 
+              color={showFavoritesOnly ? "#1DB954" : "#fff"} 
+            />
+          </TouchableOpacity>
+        </View>
+
+        {/* Hero Title Info */}
+        <View style={styles.heroTextContent}>
+          <Text style={styles.heroTitle} numberOfLines={2}>{activeGroup.title}</Text>
+          <Text style={styles.heroSubtitle}>
+            {activeGroup.type?.toUpperCase()} • {activeGroup.tracks.length} SONGS
+          </Text>
+        </View>
       </View>
 
-      <FlatList
-        data={activeGroup.tracks}
-        renderItem={renderItem}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContent}
-      />
+      {activeGroup.type === 'artist' && (
+        <View style={styles.tabs}>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'songs' && styles.activeTab]}
+            onPress={() => setActiveTab('songs')}
+          >
+            <Text style={[styles.tabText, activeTab === 'songs' && styles.activeTabText]}>Songs</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'albums' && styles.activeTab]}
+            onPress={() => setActiveTab('albums')}
+          >
+            <Text style={[styles.tabText, activeTab === 'albums' && styles.activeTabText]}>Albums</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {activeTab === 'songs' ? (
+        <FlatList
+          data={filteredTracks}
+          renderItem={renderTrackItem}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No matches in this group</Text>
+              {searchQuery.length > 0 && (
+                <TouchableOpacity style={styles.globalSearchButton} onPress={handleSearchGlobally}>
+                  <Ionicons name="globe-outline" size={20} color="#1DB954" />
+                  <Text style={styles.globalSearchText}>Search Globally for "{searchQuery}"</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          }
+          ListFooterComponent={
+            searchQuery.length > 0 && filteredTracks.length > 0 ? (
+              <TouchableOpacity style={styles.globalSearchFooter} onPress={handleSearchGlobally}>
+                <Text style={styles.globalSearchFooterText}>Search for "{searchQuery}" in entire library</Text>
+                <Ionicons name="arrow-forward" size={16} color="#1DB954" />
+              </TouchableOpacity>
+            ) : null
+          }
+        />
+      ) : (
+        <FlatList
+          data={artistAlbums}
+          renderItem={renderAlbumItem}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.listContent}
+        />
+      )}
 
       {currentTrack && (
         <TouchableOpacity 
@@ -128,22 +311,86 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#121212',
   },
+  heroContainer: {
+    height: 300,
+    width: '100%',
+    position: 'relative',
+    marginBottom: 10,
+  },
+  heroImage: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+  },
+  heroOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  heroTextContent: {
+    position: 'absolute',
+    bottom: 20,
+    left: 16,
+    right: 16,
+  },
+  heroTitle: {
+    color: '#fff',
+    fontSize: 32,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+  },
+  heroSubtitle: {
+    color: '#1DB954',
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 4,
+    letterSpacing: 1.5,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 15,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+  },
+  backIcon: {
+    marginRight: 10,
+  },
+  headerSearchBar: {
+    flex: 1,
+    marginRight: 10,
+  },
+  favoriteToggle: {
+    padding: 5,
+  },
+  tabs: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    marginBottom: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
   },
-  backIcon: {
-    marginRight: 15,
+  tab: {
+    marginRight: 20,
+    paddingBottom: 8,
+    paddingTop: 5,
   },
-  headerTitle: {
+  activeTab: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#1DB954',
+  },
+  tabText: {
+    color: '#888',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  activeTabText: {
     color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-    flex: 1,
   },
   listContent: {
     paddingHorizontal: 16,
@@ -201,6 +448,32 @@ const styles = StyleSheet.create({
   sideButton: {
     padding: 10,
   },
+  albumItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  albumIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 6,
+    backgroundColor: '#333',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+    overflow: 'hidden',
+  },
+  albumTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  albumSubtitle: {
+    color: '#888',
+    fontSize: 14,
+  },
   errorText: {
     color: '#fff',
     fontSize: 18,
@@ -212,6 +485,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: 20,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    marginTop: 50,
+  },
+  emptyText: {
+    color: '#888',
+    fontSize: 16,
+    marginBottom: 20,
+  },
+  globalSearchButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E1E1E',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  globalSearchText: {
+    color: '#1DB954',
+    marginLeft: 10,
+    fontWeight: '600',
+  },
+  globalSearchFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    marginTop: 10,
+  },
+  globalSearchFooterText: {
+    color: '#1DB954',
+    marginRight: 8,
+    fontSize: 14,
   },
   miniPlayer: {
     position: 'absolute',

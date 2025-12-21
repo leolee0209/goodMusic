@@ -19,7 +19,7 @@ export interface MusicContextType {
   repeatMode: RepeatMode;
   favorites: string[];
   showLyrics: boolean;
-  playTrack: (track: Track) => Promise<void>;
+  playTrack: (track: Track, newQueue?: Track[], title?: string) => Promise<void>;
   togglePlayPause: () => Promise<void>;
   seekTo: (millis: number) => Promise<void>;
   playNext: () => void;
@@ -32,8 +32,8 @@ export interface MusicContextType {
   importLocalFolder: () => Promise<void>;
   downloadDemoTrack: () => Promise<void>;
   pickAndImportFiles: () => Promise<void>;
+  library: Track[];
   playlist: Track[];
   setPlaylist: (tracks: Track[]) => void;
-  activeGroup: { title: string; tracks: Track[] } | null;
-  setActiveGroup: (group: { title: string; tracks: Track[] } | null) => void;
+  queueTitle: string;
 }

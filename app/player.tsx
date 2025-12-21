@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, Share, Pressable } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMusic } from '../contexts/MusicContext';
 import { SyncedLyrics } from '../components/SyncedLyrics';
 import { QueueModal } from '../components/QueueModal';
@@ -39,7 +40,8 @@ export default function PlayerScreen() {
     playlist,
     playTrack,
     showLyrics,
-    toggleLyricsView
+    toggleLyricsView,
+    queueTitle
   } = useMusic();
 
   const [isSeeking, setIsSeeking] = useState(false);
@@ -53,21 +55,17 @@ export default function PlayerScreen() {
   const showToast = (message: string) => {
     setToastMessage(message);
     setToastVisible(true);
-    // Reset trigger after animation (handled in component via effect dependency) but 
-    // we toggle visible to force re-render if needed or just rely on message change
-    // simpler: hide first then show if consecutive?
-    // The component handles transient visibility.
     setTimeout(() => setToastVisible(false), 2000); 
   };
 
   if (!currentTrack) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <Text style={styles.text}>No track playing</Text>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.closeButton}>Go Back</Text>
         </TouchableOpacity>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -137,30 +135,41 @@ export default function PlayerScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       {/* Header / Close */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerIcon}>
           <Ionicons name="chevron-down" size={30} color="#fff" />
         </TouchableOpacity>
         <View style={styles.headerTextContainer}>
-          <Text style={styles.headerSubtitle}>PLAYING FROM PLAYLIST</Text>
-          <Text style={styles.headerTitle} numberOfLines={1}>{currentTrack.title}</Text>
+          <Text style={styles.headerSubtitle}>PLAYING FROM</Text>
+          <Text style={styles.headerQueueTitle} numberOfLines={1}>{queueTitle.toUpperCase()}</Text>
         </View>
-        <TouchableOpacity onPress={toggleLyricsView}>
+        <TouchableOpacity onPress={toggleLyricsView} style={styles.headerIcon}>
           <Ionicons name="musical-notes" size={24} color={showLyrics ? "#1DB954" : "#fff"} />
         </TouchableOpacity>
       </View>
 
       {/* Main Content */}
       <View style={styles.content}>
-        {showLyrics && currentTrack.lrc ? (
-           <SyncedLyrics 
-             lrc={currentTrack.lrc} 
-             positionMillis={positionMillis} 
-             onLinePress={(time) => seekTo(time)}
-             onToggle={toggleLyricsView}
-           />
+        {showLyrics ? (
+          currentTrack.lrc ? (
+            <SyncedLyrics 
+              lrc={currentTrack.lrc} 
+              positionMillis={positionMillis} 
+              onLinePress={(time) => seekTo(time)}
+              onToggle={toggleLyricsView}
+            />
+          ) : (
+            <Pressable 
+              style={styles.noLyricsContainer} 
+              onPress={toggleLyricsView}
+            >
+              <Ionicons name="musical-notes-outline" size={80} color="rgba(255,255,255,0.2)" />
+              <Text style={styles.noLyricsText}>No lyrics found</Text>
+              <Text style={styles.noLyricsSubtext}>Tap to show artwork</Text>
+            </Pressable>
+          )
         ) : (
           <Pressable 
             style={styles.contentTouchable} 
@@ -262,7 +271,7 @@ export default function PlayerScreen() {
       />
       
       <Toast visible={toastVisible} message={toastMessage} />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -270,29 +279,35 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#121212',
-    paddingTop: 50,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    marginBottom: 20,
+    marginBottom: 10,
+    height: 60,
+  },
+  headerIcon: {
+    width: 40,
+    alignItems: 'center',
   },
   headerTextContainer: {
     alignItems: 'center',
     flex: 1,
   },
   headerSubtitle: {
-    color: '#aaa',
+    color: '#888',
     fontSize: 10,
-    letterSpacing: 1,
+    letterSpacing: 1.5,
     fontWeight: 'bold',
   },
-  headerTitle: {
+  headerQueueTitle: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: 'bold',
+    marginTop: 2,
+    letterSpacing: 0.5,
   },
   content: {
     flex: 1,
@@ -305,6 +320,23 @@ const styles = StyleSheet.create({
     width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  noLyricsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+  },
+  noLyricsText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginTop: 20,
+  },
+  noLyricsSubtext: {
+    color: '#888',
+    fontSize: 14,
+    marginTop: 8,
   },
   artworkContainer: {
     width: width - 60,
