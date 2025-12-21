@@ -1,10 +1,11 @@
-name: Build Unsigned iOS IPA
+name: Build Unsigned iOS IPA (Turbo)
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Use macos-14 (M1 Silicon) - it is significantly faster than macos-latest (often Intel)
+    runs-on: macos-14
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -13,14 +14,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm' # Auto-caches node_modules based on package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci # 'npm ci' is faster and more reliable than 'npm install' in CI
+
+      - name: Cache CocoaPods
+        id: cache-pods
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
 
       - name: Expo Prebuild
         run: npx expo prebuild --platform ios
 
       - name: Install CocoaPods
+        if: steps.cache-pods.outputs.cache-hit != 'true'
         run: |
           cd ios
           pod install
@@ -28,25 +40,23 @@ jobs:
 
       - name: Build Unsigned IPA
         run: |
-          # 1. Smarter detection: find the workspace that isn't a hidden data file
           WORKSPACE_PATH=$(find ios -maxdepth 1 -name "*.xcworkspace" | head -n 1)
           SCHEME_NAME=$(basename "$WORKSPACE_PATH" .xcworkspace)
           
-          echo "Found Workspace: $WORKSPACE_PATH"
-          echo "Using Scheme: $SCHEME_NAME"
-
-          # 2. Build command
+          # Added -quiet to reduce log bloat (which slows down the runner)
+          # Added -jobs 4 to utilize multi-core M1 processing
           xcodebuild -workspace "$WORKSPACE_PATH" \
                      -scheme "$SCHEME_NAME" \
                      -configuration Release \
                      -sdk iphoneos \
                      -archivePath $PWD/build/App.xcarchive \
+                     -jobs 4 \
                      CODE_SIGNING_ALLOWED=NO \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGNING_ENTITLEMENTS="" \
                      GCC_WARN_INHIBIT_ALL_WARNINGS=YES \
-                     archive
+                     archive | xcpretty # xcpretty makes the output readable without slowing it down
 
       - name: Package IPA
         run: |
@@ -59,3 +69,4 @@ jobs:
         with:
           name: goodMusic-ipa
           path: goodMusic.ipa
+          retention-days: 1 # Shorter retention saves GitHub storage space

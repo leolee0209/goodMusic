@@ -91,7 +91,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const listener = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
       if (isTransitioning.current) return;
-
       setPositionMillis(status.currentTime * 1000);
       setDurationMillis(status.duration * 1000);
       setIsPlaying(status.playing);
@@ -150,13 +149,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const playTrackInternal = async (track: Track) => {
     try {
       if (!playerRef.current) return;
-      
       isTransitioning.current = true;
       setCurrentTrack(track);
       setIsPlaying(true);
-
       playerRef.current.replace(track.uri);
-      
       if (playerRef.current && typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
         (playerRef.current as any).setActiveForLockScreen(true, {
           title: track.title,
@@ -165,13 +161,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           artworkUrl: track.artwork || undefined,
         });
       }
-
       playerRef.current.play();
-      
       setTimeout(() => {
         isTransitioning.current = false;
       }, 200);
-
     } catch (error) {
       console.error('Error playing track:', error);
       isTransitioning.current = false;
@@ -185,8 +178,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setPlaybackOrigin(origin || null);
       if (isShuffle) {
         const others = newQueue.filter(t => t.id !== track.id);
-        const shuffledOthers = shuffleArray(others);
-        setPlaylistState([track, ...shuffledOthers]);
+        setPlaylistState([track, ...shuffleArray(others)]);
       } else {
         setPlaylistState(newQueue);
       }
@@ -314,7 +306,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           (track) => {
             processedCount++;
             setScanProgress(prev => ({ ...prev, current: processedCount }));
-            
             currentBatch.push(track);
             if (currentBatch.length >= BATCH_SIZE) {
               const batchToProcess = [...currentBatch];
@@ -322,7 +313,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               setLibrary(prev => {
                 const prevMap = new Map(prev.map(t => [t.id, t]));
                 batchToProcess.forEach(t => prevMap.set(t.id, t));
-                return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
+                return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
               });
             }
           },
@@ -332,9 +323,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
 
         if (Array.isArray(syncedTracks)) {
-           setLibrary(syncedTracks);
-           setPlaylistState(prev => prev.length === 0 ? syncedTracks : prev);
-           setOriginalPlaylist(prev => prev.length === 0 ? syncedTracks : prev);
+           const sortedTracks = [...syncedTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+           setLibrary(sortedTracks);
+           setPlaylistState(prev => prev.length === 0 ? sortedTracks : prev);
+           setOriginalPlaylist(prev => prev.length === 0 ? sortedTracks : prev);
         }
         resolve();
       });
@@ -347,74 +339,58 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         try {
           const musicDir = FileSystem.documentDirectory + 'music/';
           await FileSystem.makeDirectoryAsync(musicDir, { intermediates: true });
-
           if (Platform.OS === 'android') {
             const permissions = await (FileSystem as any).StorageAccessFramework.requestDirectoryPermissionsAsync();
             if (permissions.granted) {
               const uri = permissions.directoryUri;
               const files = await (FileSystem as any).StorageAccessFramework.readDirectoryAsync(uri);
-              
               setScanProgress({ current: 0, total: files.length });
               for (let i = 0; i < files.length; i++) {
                 const fileUri = files[i];
                 const fileName = decodeURIComponent(fileUri).split('/').pop();
-                if (fileName) {
-                  await FileSystem.copyAsync({
-                    from: fileUri,
-                    to: musicDir + fileName
-                  });
-                }
+                if (fileName) await FileSystem.copyAsync({ from: fileUri, to: musicDir + fileName });
                 setScanProgress(prev => ({ ...prev, current: i + 1 }));
               }
             }
           } else {
-            const result = await DocumentPicker.getDocumentAsync({
-              type: 'public.folder',
-              copyToCacheDirectory: false
-            });
-
+            const result = await DocumentPicker.getDocumentAsync({ type: 'public.folder', copyToCacheDirectory: false });
             if (!result.canceled && result.assets && result.assets.length > 0) {
               const uri = result.assets[0].uri;
               const files = await FileSystem.readDirectoryAsync(uri);
-              
               setScanProgress({ current: 0, total: files.length });
               for (let i = 0; i < files.length; i++) {
                 const fileName = files[i];
                 if (!fileName.startsWith('.')) {
-                  await FileSystem.copyAsync({
-                    from: uri + (uri.endsWith('/') ? '' : '/') + fileName,
-                    to: musicDir + fileName
-                  });
+                  await FileSystem.copyAsync({ from: uri + (uri.endsWith('/') ? '' : '/') + fileName, to: musicDir + fileName });
                 }
                 setScanProgress(prev => ({ ...prev, current: i + 1 }));
               }
             }
           }
-          // Incremental final sync with real-time UI updates
           let syncCount = 0;
           let currentSyncBatch: Track[] = [];
           const SYNC_BATCH_SIZE = 25;
-
-          await syncLibrary(
+          const finalTracks = await syncLibrary(
             (track) => {
               syncCount++;
               setScanProgress(prev => ({ ...prev, current: syncCount }));
               currentSyncBatch.push(track);
-
               if (currentSyncBatch.length >= SYNC_BATCH_SIZE) {
                 const batchToProcess = [...currentSyncBatch];
                 currentSyncBatch = [];
                 setLibrary(prev => {
                   const prevMap = new Map(prev.map(t => [t.id, t]));
                   batchToProcess.forEach(t => prevMap.set(t.id, t));
-                  return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
+                  return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
                 });
               }
             },
-            (total) => {
-              setScanProgress({ current: 0, total });
-            }
+            (total) => { setScanProgress({ current: 0, total }); }
           );
+          if (finalTracks) {
+            const sorted = [...finalTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+            setLibrary(sorted);
+          }
         } catch (e) { console.warn("Folder import error:", e); }
         resolve();
       });
@@ -436,58 +412,43 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         try {
-          const result = await DocumentPicker.getDocumentAsync({
-            type: ['audio/*', 'application/octet-stream'],
-            multiple: true,
-            copyToCacheDirectory: true
-          });
-
+          const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*', 'application/octet-stream'], multiple: true, copyToCacheDirectory: true });
           if (!result.canceled) {
             const destDir = FileSystem.documentDirectory + 'music/';
             const dirInfo = await FileSystem.getInfoAsync(destDir);
-            if (!dirInfo.exists) {
-              await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
-            }
-
+            if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
             setScanProgress({ current: 0, total: result.assets.length });
             for (let i = 0; i < result.assets.length; i++) {
               const file = result.assets[i];
-              const destUri = destDir + file.name;
-              await FileSystem.copyAsync({
-                from: file.uri,
-                to: destUri
-              });
+              await FileSystem.copyAsync({ from: file.uri, to: destDir + file.name });
               setScanProgress(prev => ({ ...prev, current: i + 1 }));
             }
-            // Incremental final sync with real-time UI updates
             let syncCount = 0;
             let currentSyncBatch: Track[] = [];
             const SYNC_BATCH_SIZE = 25;
-
-            await syncLibrary(
+            const finalTracks = await syncLibrary(
               (track) => {
                 syncCount++;
                 setScanProgress(prev => ({ ...prev, current: syncCount }));
                 currentSyncBatch.push(track);
-
                 if (currentSyncBatch.length >= SYNC_BATCH_SIZE) {
                   const batchToProcess = [...currentSyncBatch];
                   currentSyncBatch = [];
                   setLibrary(prev => {
                     const prevMap = new Map(prev.map(t => [t.id, t]));
                     batchToProcess.forEach(t => prevMap.set(t.id, t));
-                    return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title));
+                    return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
                   });
                 }
               },
-              (total) => {
-                setScanProgress({ current: 0, total });
-              }
+              (total) => { setScanProgress({ current: 0, total }); }
             );
+            if (finalTracks) {
+              const sorted = [...finalTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+              setLibrary(sorted);
+            }
           }
-        } catch (e) {
-          console.error("Pick and Import failed:", e);
-        }
+        } catch (e) { console.error("Pick and Import failed:", e); }
         resolve();
       });
     });
