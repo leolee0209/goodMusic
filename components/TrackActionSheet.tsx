@@ -39,8 +39,8 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
         <View style={styles.content}>
           <View style={styles.header}>
             <View style={styles.trackInfo}>
-              <Text style={styles.trackTitle} numberOfLines={1}>{track.title}</Text>
-              <Text style={styles.trackArtist} numberOfLines={1}>{track.artist}</Text>
+              <Text style={styles.trackTitle} numberOfLines={1} ellipsizeMode="middle">{track.title}</Text>
+              <Text style={styles.trackArtist} numberOfLines={1} ellipsizeMode="middle">{track.artist}</Text>
             </View>
           </View>
 

@@ -256,8 +256,8 @@ export default function GroupDetailScreen() {
              )}
           </View>
           <View style={styles.info}>
-            <Text style={[styles.title, isCurrent && styles.activeText]} numberOfLines={1}>{item.title}</Text>
-            <Text style={styles.artist} numberOfLines={1}>{item.artist}</Text>
+            <Text style={[styles.title, isCurrent && styles.activeText]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
+            <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">{item.artist}</Text>
           </View>
         </TouchableOpacity>
         
@@ -304,7 +304,7 @@ export default function GroupDetailScreen() {
           )}
         </View>
         <View style={styles.info}>
-          <Text style={styles.albumTitle}>{item.name}</Text>
+          <Text style={styles.albumTitle} numberOfLines={1} ellipsizeMode="middle">{item.name}</Text>
           <Text style={styles.albumSubtitle}>{item.tracks.length} songs</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color="#666" />

@@ -37,6 +37,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateQueue = useRef<Promise<void>>(Promise.resolve());
   const playerRef = useRef<AudioPlayer | null>(null);
+  const isTransitioning = useRef(false);
 
   const queueTask = (task: () => Promise<void>) => {
     updateQueue.current = updateQueue.current.then(async () => {
@@ -89,6 +90,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playerRef.current = player;
 
     const listener = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+      // Don't update state if we are in the middle of replacing a track
+      if (isTransitioning.current) return;
+
       setPositionMillis(status.currentTime * 1000);
       setDurationMillis(status.duration * 1000);
       setIsPlaying(status.playing);
@@ -147,8 +151,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const playTrackInternal = async (track: Track) => {
     try {
       if (!playerRef.current) return;
-      playerRef.current.pause();
+      
+      isTransitioning.current = true;
+      setCurrentTrack(track);
+      setIsPlaying(true); // Optimistic UI update
+
+      // Replace source
       playerRef.current.replace(track.uri);
+      
+      // Update Lock Screen Metadata
       if (playerRef.current && typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
         (playerRef.current as any).setActiveForLockScreen(true, {
           title: track.title,
@@ -157,13 +168,18 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           artworkUrl: track.artwork || undefined,
         });
       }
-      setCurrentTrack(track);
-      setIsPlaying(true);
+
+      // Ensure playback starts
+      playerRef.current.play();
+      
+      // End transition after a short tick to let the internal player state stabilize
       setTimeout(() => {
-        if (playerRef.current) playerRef.current.play();
-      }, 50);
+        isTransitioning.current = false;
+      }, 200);
+
     } catch (error) {
       console.error('Error playing track:', error);
+      isTransitioning.current = false;
     }
   };
 
@@ -185,8 +201,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const togglePlayPause = async () => {
     if (!playerRef.current) return;
-    if (isPlaying) playerRef.current.pause();
-    else playerRef.current.play();
+    if (isPlaying) {
+      playerRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      playerRef.current.play();
+      setIsPlaying(true);
+    }
   };
 
   const seekTo = async (millis: number) => {

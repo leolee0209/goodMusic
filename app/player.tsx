@@ -212,7 +212,7 @@ export default function PlayerScreen() {
         </TouchableOpacity>
         <TouchableOpacity style={styles.headerTextContainer} onPress={handleOriginPress}>
           <Text style={styles.headerSubtitle}>PLAYING FROM</Text>
-          <Text style={styles.headerQueueTitle} numberOfLines={1}>
+          <Text style={styles.headerQueueTitle} numberOfLines={1} ellipsizeMode="middle">
             {playbackOrigin?.title.toUpperCase() || 'ALL SONGS'}
             {playbackOrigin?.favoritesOnly && ' • FAVORITES'}
           </Text>
@@ -259,10 +259,10 @@ export default function PlayerScreen() {
         <View style={styles.trackInfoRow}>
           <View style={styles.trackInfo}>
             <TouchableOpacity onPress={goToAlbum}>
-              <Text style={styles.trackTitle}>{currentTrack.title}</Text>
+              <Text style={styles.trackTitle} numberOfLines={1} ellipsizeMode="middle">{currentTrack.title}</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={goToArtist}>
-              <Text style={styles.trackArtist}>{currentTrack.artist}</Text>
+              <Text style={styles.trackArtist} numberOfLines={1} ellipsizeMode="middle">{currentTrack.artist}</Text>
             </TouchableOpacity>
           </View>
           <View style={styles.trackActions}>

@@ -49,10 +49,10 @@ export const QueueModal: React.FC<QueueModalProps> = ({
                 >
                   <Image source={{ uri: item.artwork }} style={styles.artwork} />
                   <View style={styles.info}>
-                    <Text style={[styles.title, isCurrent && styles.activeText]} numberOfLines={1}>
+                    <Text style={[styles.title, isCurrent && styles.activeText]} numberOfLines={1} ellipsizeMode="middle">
                       {item.title}
                     </Text>
-                    <Text style={styles.artist} numberOfLines={1}>
+                    <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">
                       {item.artist}
                     </Text>
                   </View>
