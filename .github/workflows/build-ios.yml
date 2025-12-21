@@ -4,20 +4,25 @@ on:
 
 jobs:
   build:
-    # Use macos-14 (M1 Silicon) - it is significantly faster than macos-latest (often Intel)
-    runs-on: macos-14
+    runs-on: macos-14 # M1 Silicon is faster
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # --- NEW STEP: Switch to Xcode 16.1+ ---
+      - name: Set up Xcode version
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.1' # Or 'latest-stable'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm' # Auto-caches node_modules based on package-lock.json
+          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci # 'npm ci' is faster and more reliable than 'npm install' in CI
+        run: npm ci
 
       - name: Cache CocoaPods
         id: cache-pods
@@ -25,8 +30,6 @@ jobs:
         with:
           path: ios/Pods
           key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pods-
 
       - name: Expo Prebuild
         run: npx expo prebuild --platform ios
@@ -43,8 +46,6 @@ jobs:
           WORKSPACE_PATH=$(find ios -maxdepth 1 -name "*.xcworkspace" | head -n 1)
           SCHEME_NAME=$(basename "$WORKSPACE_PATH" .xcworkspace)
           
-          # Added -quiet to reduce log bloat (which slows down the runner)
-          # Added -jobs 4 to utilize multi-core M1 processing
           xcodebuild -workspace "$WORKSPACE_PATH" \
                      -scheme "$SCHEME_NAME" \
                      -configuration Release \
@@ -56,7 +57,7 @@ jobs:
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGNING_ENTITLEMENTS="" \
                      GCC_WARN_INHIBIT_ALL_WARNINGS=YES \
-                     archive | xcpretty # xcpretty makes the output readable without slowing it down
+                     archive
 
       - name: Package IPA
         run: |
@@ -69,4 +70,3 @@ jobs:
         with:
           name: goodMusic-ipa
           path: goodMusic.ipa
-          retention-days: 1 # Shorter retention saves GitHub storage space
