@@ -38,10 +38,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/App.xcarchive/Products/Applications/*.app Payload/
-          zip -r MahjongPlayer.ipa Payload
+          zip -r goodMusic.ipa Payload
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mahjong-ipa
-          path: MahjongPlayer.ipa
+          name: goodMusic-ipa
+          path: goodMusic.ipa
