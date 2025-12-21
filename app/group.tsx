@@ -1,30 +1,118 @@
-import React, { useState, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import React, { useState, useMemo, useEffect } from 'react';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
-import { Track } from '../types';
+import { Track, PlaybackOrigin } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
+import { TrackActionSheet } from '../components/TrackActionSheet';
 
 export default function GroupDetailScreen() {
   const router = useRouter();
-  const { title, type } = useLocalSearchParams<{ title: string; type: 'artist' | 'album' }>();
-  const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites } = useMusic();
+  const { title, type, id, f } = useLocalSearchParams<{ title: string; type: 'artist' | 'album' | 'playlist'; id?: string; f?: string }>();
+  const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites, playlists, addToPlaylist, removeFromPlaylist } = useMusic();
   const [searchQuery, setSearchQuery] = useState('');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(f === 'true');
   const [activeTab, setActiveTab] = useState<'songs' | 'albums'>('songs');
+  const [playlistTracks, setPlaylistTracks] = useState<Track[]>([]);
+
+  // Selection Mode State
+  const [selectedTracks, setSelectedTracks] = useState<string[]>([]);
+  const isSelectionMode = selectedTracks.length > 0;
+
+  // Action Sheet State
+  const [actionSheetVisible, setActionSheetVisible] = useState(false);
+  const [activeTrack, setActiveTrack] = useState<Track | null>(null);
+
+  // Sync state if param changes
+  useEffect(() => {
+    if (f === 'true') setShowFavoritesOnly(true);
+  }, [f]);
+
+  const loadPlaylistTracks = async () => {
+    if (type === 'playlist' && id) {
+      const tracks = await import('../utils/database').then(m => m.getPlaylistTracks(id));
+      setPlaylistTracks(tracks);
+    }
+  };
+
+  // For playlists, we need to load tracks from DB
+  useEffect(() => {
+    loadPlaylistTracks();
+  }, [type, id]);
+
+  const toggleSelectTrack = (trackId: string) => {
+    setSelectedTracks(prev => 
+      prev.includes(trackId) ? prev.filter(id => id !== trackId) : [...prev, trackId]
+    );
+  };
+
+  const handleBulkAddToPlaylist = () => {
+    if (selectedTracks.length === 0) return;
+    
+    Alert.alert(
+      "Add to Playlist",
+      `Select a playlist to add ${selectedTracks.length} songs:`,
+      [
+        ...playlists.map(p => ({
+          text: p.title,
+          onPress: async () => {
+            await addToPlaylist(p.id, selectedTracks);
+            setSelectedTracks([]);
+          }
+        })),
+        { text: "Cancel", style: "cancel" }
+      ]
+    );
+  };
+
+  const handleSingleTrackAction = (track: Track) => {
+    setActiveTrack(track);
+    setActionSheetVisible(true);
+  };
+
+  const handleActionSheetAddToPlaylist = async (playlistId: string) => {
+    if (activeTrack) {
+      await addToPlaylist(playlistId, [activeTrack.id]);
+      setActionSheetVisible(false);
+    }
+  };
+
+  const handleActionSheetRemoveFromPlaylist = async () => {
+    if (activeTrack && type === 'playlist' && id) {
+      await removeFromPlaylist(id, [activeTrack.id]);
+      await loadPlaylistTracks(); // Refresh list
+      setActionSheetVisible(false);
+    }
+  };
+
+  const goToArtist = (artist: string) => {
+    setActionSheetVisible(false);
+    router.push({
+      pathname: '/group',
+      params: { title: artist, type: 'artist' }
+    });
+  };
+
+  const goToAlbum = (album: string) => {
+    setActionSheetVisible(false);
+    router.push({
+      pathname: '/group',
+      params: { title: album, type: 'album' }
+    });
+  };
 
   // Derive activeGroup from title and type params using the full library
   const activeGroup = useMemo(() => {
     if (!title || !type) return null;
-    const tracks = library.filter(track => {
-      if (type === 'artist') return track.artist === title;
-      if (type === 'album') return track.album === title;
-      return false;
-    });
+    let tracks: Track[] = [];
+    if (type === 'artist') tracks = library.filter(track => track.artist === title);
+    else if (type === 'album') tracks = library.filter(track => track.album === title);
+    else if (type === 'playlist') tracks = playlistTracks;
+    
     return { title, tracks, type };
-  }, [library, title, type]);
+  }, [library, title, type, playlistTracks]);
 
   const handleBack = () => {
     router.back();
@@ -82,7 +170,12 @@ export default function GroupDetailScreen() {
     if (currentTrack?.id === track.id) {
       router.push('/player');
     } else {
-      await playTrack(track, filteredTracks, activeGroup.title);
+      const origin: PlaybackOrigin = { 
+        type: activeGroup.type as any, 
+        title: activeGroup.title,
+        favoritesOnly: showFavoritesOnly
+      };
+      await playTrack(track, filteredTracks, activeGroup.title, origin);
       router.push('/player');
     }
   };
@@ -91,9 +184,15 @@ export default function GroupDetailScreen() {
     if (currentTrack?.id === track.id) {
       await togglePlayPause();
     } else {
-      await playTrack(track, filteredTracks, activeGroup.title);
+      const origin: PlaybackOrigin = { 
+        type: activeGroup.type as any, 
+        title: activeGroup.title,
+        favoritesOnly: showFavoritesOnly
+      };
+      await playTrack(track, filteredTracks, activeGroup.title, origin);
     }
   };
+
 
   const handleAlbumPress = (album: { name: string, tracks: Track[] }) => {
     // Push new screen with params for animation and history
@@ -115,17 +214,25 @@ export default function GroupDetailScreen() {
 
   const renderTrackItem = ({ item }: { item: Track }) => {
     const isCurrent = currentTrack?.id === item.id;
+    const isSelected = selectedTracks.includes(item.id);
+
     return (
-      <View style={[styles.item, isCurrent && styles.activeItem]}>
+      <View style={[styles.item, isCurrent && styles.activeItem, isSelected && styles.selectedItem]}>
         <TouchableOpacity 
           style={styles.itemContent} 
-          onPress={() => handleTrackPress(item)}
+          onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
+          onLongPress={() => toggleSelectTrack(item.id)}
         >
           <View style={styles.artworkPlaceholder}>
              {item.artwork ? (
                <Image source={{ uri: item.artwork }} style={styles.artwork} />
              ) : (
                <Ionicons name="musical-note" size={24} color="#555" />
+             )}
+             {isSelected && (
+               <View style={styles.selectedOverlay}>
+                 <Ionicons name="checkmark-circle" size={24} color="#1DB954" />
+               </View>
              )}
           </View>
           <View style={styles.info}>
@@ -134,24 +241,33 @@ export default function GroupDetailScreen() {
           </View>
         </TouchableOpacity>
         
-        <TouchableOpacity 
-          style={styles.sideButton}
-          onPress={() => handleSideButtonPress(item)}
-        >
-          {isCurrent ? (
-            <Ionicons 
-              name={isPlaying ? "pause-circle" : "play-circle"} 
-              size={30} 
-              color="#1DB954" 
-            />
-          ) : (
-            <Ionicons 
-              name="play-circle-outline" 
-              size={30} 
-              color="#888" 
-            />
-          )}
-        </TouchableOpacity>
+        <View style={styles.sideButtons}>
+          <TouchableOpacity 
+            style={styles.sideButton}
+            onPress={() => handleSingleTrackAction(item)}
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color="#888" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.sideButton}
+            onPress={() => handleSideButtonPress(item)}
+          >
+            {isCurrent ? (
+              <Ionicons 
+                name={isPlaying ? "pause-circle" : "play-circle"} 
+                size={30} 
+                color="#1DB954" 
+              />
+            ) : (
+              <Ionicons 
+                name="play-circle-outline" 
+                size={30} 
+                color="#888" 
+              />
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
     );
   };
@@ -193,31 +309,43 @@ export default function GroupDetailScreen() {
         )}
         <View style={styles.heroOverlay} />
         
-        {/* Floating Top Controls */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleBack} style={styles.backIcon}>
-            <Ionicons name="chevron-back" size={28} color="#fff" />
-          </TouchableOpacity>
-          
-          <SearchBar 
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onClear={() => setSearchQuery('')}
-            placeholder={`Search ${activeGroup.type}...`}
-            containerStyle={styles.headerSearchBar}
-          />
-          
-          <TouchableOpacity 
-            onPress={() => setShowFavoritesOnly(!showFavoritesOnly)} 
-            style={styles.favoriteToggle}
-          >
-            <Ionicons 
-              name={showFavoritesOnly ? "heart" : "heart-outline"} 
-              size={24} 
-              color={showFavoritesOnly ? "#1DB954" : "#fff"} 
+        {/* Floating Top Controls / Selection Bar */}
+        {isSelectionMode ? (
+          <View style={[styles.header, styles.selectionBar]}>
+            <TouchableOpacity onPress={() => setSelectedTracks([])} style={styles.iconButton}>
+              <Ionicons name="close" size={30} color="#fff" />
+            </TouchableOpacity>
+            <Text style={styles.selectionTitle}>{selectedTracks.length} Selected</Text>
+            <TouchableOpacity onPress={handleBulkAddToPlaylist} style={styles.iconButton}>
+              <Ionicons name="add-circle" size={30} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.header}>
+            <TouchableOpacity onPress={handleBack} style={styles.backIcon}>
+              <Ionicons name="chevron-back" size={28} color="#fff" />
+            </TouchableOpacity>
+            
+            <SearchBar 
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onClear={() => setSearchQuery('')}
+              placeholder={`Search ${activeGroup.type}...`}
+              containerStyle={styles.headerSearchBar}
             />
-          </TouchableOpacity>
-        </View>
+            
+            <TouchableOpacity 
+              onPress={() => setShowFavoritesOnly(!showFavoritesOnly)} 
+              style={styles.favoriteToggle}
+            >
+              <Ionicons 
+                name={showFavoritesOnly ? "heart" : "heart-outline"} 
+                size={24} 
+                color={showFavoritesOnly ? "#1DB954" : "#fff"} 
+              />
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* Hero Title Info */}
         <View style={styles.heroTextContent}>
@@ -302,6 +430,17 @@ export default function GroupDetailScreen() {
           </TouchableOpacity>
         </TouchableOpacity>
       )}
+
+      <TrackActionSheet
+        visible={actionSheetVisible}
+        onClose={() => setActionSheetVisible(false)}
+        track={activeTrack}
+        playlists={playlists}
+        onAddToPlaylist={handleActionSheetAddToPlaylist}
+        onGoToArtist={() => activeTrack && goToArtist(activeTrack.artist)}
+        onGoToAlbum={() => activeTrack && activeTrack.album && goToAlbum(activeTrack.album)}
+        onRemoveFromPlaylist={type === 'playlist' ? handleActionSheetRemoveFromPlaylist : undefined}
+      />
     </SafeAreaView>
   );
 }
@@ -368,6 +507,20 @@ const styles = StyleSheet.create({
   favoriteToggle: {
     padding: 5,
   },
+  selectionBar: {
+    backgroundColor: '#1DB954',
+    justifyContent: 'space-between',
+  },
+  selectionTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  iconButton: {
+    padding: 5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   tabs: {
     flexDirection: 'row',
     paddingHorizontal: 16,
@@ -410,6 +563,11 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: '#1DB954',
   },
+  selectedItem: {
+    backgroundColor: 'rgba(29, 185, 84, 0.1)',
+    borderColor: '#1DB954',
+    borderWidth: 1,
+  },
   itemContent: {
     flex: 1,
     flexDirection: 'row',
@@ -423,6 +581,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'hidden',
+    position: 'relative',
+  },
+  selectedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   artwork: {
     width: '100%',
@@ -444,6 +609,10 @@ const styles = StyleSheet.create({
     color: '#aaa',
     fontSize: 14,
     marginTop: 2,
+  },
+  sideButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   sideButton: {
     padding: 10,

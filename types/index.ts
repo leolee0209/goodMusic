@@ -10,6 +10,19 @@ export interface Track {
 
 export type RepeatMode = 'none' | 'one' | 'all';
 
+export type PlaybackOrigin = {
+  type: 'all' | 'artist' | 'album' | 'playlist' | 'search' | 'favorites';
+  title: string;
+  searchQuery?: string;
+  favoritesOnly?: boolean;
+};
+
+export interface Playlist {
+  id: string;
+  title: string;
+  createdAt: number;
+}
+
 export interface MusicContextType {
   currentTrack: Track | null;
   isPlaying: boolean;
@@ -19,7 +32,7 @@ export interface MusicContextType {
   repeatMode: RepeatMode;
   favorites: string[];
   showLyrics: boolean;
-  playTrack: (track: Track, newQueue?: Track[], title?: string) => Promise<void>;
+  playTrack: (track: Track, newQueue?: Track[], title?: string, origin?: PlaybackOrigin) => Promise<void>;
   togglePlayPause: () => Promise<void>;
   seekTo: (millis: number) => Promise<void>;
   playNext: () => void;
@@ -36,4 +49,13 @@ export interface MusicContextType {
   playlist: Track[];
   setPlaylist: (tracks: Track[]) => void;
   queueTitle: string;
+  playbackOrigin: PlaybackOrigin | null;
+  
+  // Playlists
+  playlists: Playlist[];
+  createPlaylist: (title: string) => Promise<string>;
+  addToPlaylist: (playlistId: string, trackIds: string[]) => Promise<void>;
+  removeFromPlaylist: (playlistId: string, trackIds: string[]) => Promise<void>;
+  deletePlaylist: (playlistId: string) => Promise<void>;
+  loadPlaylists: () => Promise<void>;
 }

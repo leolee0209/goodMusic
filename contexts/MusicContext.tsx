@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync } from 'expo-audio';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Track, MusicContextType, RepeatMode } from '../types';
+import { Track, MusicContextType, RepeatMode, PlaybackOrigin, Playlist } from '../types';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
@@ -25,7 +25,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [playlist, setPlaylistState] = useState<Track[]>([]);
   const [originalPlaylist, setOriginalPlaylist] = useState<Track[]>([]);
   const [queueTitle, setQueueTitle] = useState('All Songs');
+  const [playbackOrigin, setPlaybackOrigin] = useState<PlaybackOrigin | null>(null);
   
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isShuffle, setIsShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -77,6 +79,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setLibrary(tracks);
       setPlaylist(tracks);
       setOriginalPlaylist(tracks);
+      await loadPlaylists();
     };
     loadLibrary();
 
@@ -166,10 +169,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const playTrack = async (track: Track, newQueue?: Track[], title?: string) => {
+  const playTrack = async (track: Track, newQueue?: Track[], title?: string, origin?: PlaybackOrigin) => {
     if (newQueue) {
       setOriginalPlaylist(newQueue);
       setQueueTitle(title || 'All Songs');
+      setPlaybackOrigin(origin || null);
       if (isShuffle) {
         const others = newQueue.filter(t => t.id !== track.id);
         const shuffledOthers = shuffleArray(others);
@@ -294,6 +298,32 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const loadPlaylists = async () => {
+    const data = await import('../utils/database').then(m => m.getAllPlaylists());
+    setPlaylists(data);
+  };
+
+  const createPlaylist = async (title: string) => {
+    const id = await import('../utils/database').then(m => m.createPlaylist(title));
+    await loadPlaylists();
+    return id;
+  };
+
+  const addToPlaylist = async (playlistId: string, trackIds: string[]) => {
+    await import('../utils/database').then(m => m.addTracksToPlaylist(playlistId, trackIds));
+    await loadPlaylists();
+  };
+
+  const removeFromPlaylist = async (playlistId: string, trackIds: string[]) => {
+    await import('../utils/database').then(m => m.removeFromPlaylist(playlistId, trackIds));
+    await loadPlaylists();
+  };
+
+  const deletePlaylist = async (playlistId: string) => {
+    await import('../utils/database').then(m => m.deletePlaylist(playlistId));
+    await loadPlaylists();
+  };
+
   const refreshLibrary = async () => {
     const syncedTracks = await syncLibrary();
     if (Array.isArray(syncedTracks) && syncedTracks.length > 0) {
@@ -408,6 +438,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       playlist,
       setPlaylist,
       queueTitle,
+      playbackOrigin,
+      playlists,
+      createPlaylist,
+      addToPlaylist,
+      removeFromPlaylist,
+      deletePlaylist,
+      loadPlaylists,
     }}>
       {children}
     </MusicContext.Provider>

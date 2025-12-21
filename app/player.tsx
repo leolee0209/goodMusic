@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, Share, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, Share, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMusic } from '../contexts/MusicContext';
+import { Track } from '../types';
 import { SyncedLyrics } from '../components/SyncedLyrics';
 import { QueueModal } from '../components/QueueModal';
 import { Toast } from '../components/Toast';
@@ -9,6 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
+import { TrackActionSheet } from '../components/TrackActionSheet';
 
 const { width } = Dimensions.get('window');
 
@@ -41,13 +43,20 @@ export default function PlayerScreen() {
     playTrack,
     showLyrics,
     toggleLyricsView,
-    queueTitle
+    queueTitle,
+    playbackOrigin,
+    playlists,
+    addToPlaylist
   } = useMusic();
 
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekValue, setSeekValue] = useState(0);
   const [showQueue, setShowQueue] = useState(false);
   
+  // Action Sheet State
+  const [actionSheetVisible, setActionSheetVisible] = useState(false);
+  const [activeTrack, setActiveTrack] = useState<Track | null>(null);
+
   // Toast State
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -68,6 +77,66 @@ export default function PlayerScreen() {
       </SafeAreaView>
     );
   }
+
+  const handleSingleTrackAction = (track: Track) => {
+    setActiveTrack(track);
+    setActionSheetVisible(true);
+  };
+
+  const handleActionSheetAddToPlaylist = async (playlistId: string) => {
+    if (activeTrack) {
+      await addToPlaylist(playlistId, [activeTrack.id]);
+      setActionSheetVisible(false);
+      showToast("Added to playlist");
+    }
+  };
+
+  const handleOriginPress = () => {
+    if (!playbackOrigin) {
+      router.back();
+      return;
+    }
+
+    // Dismiss modal first so we are back at the previous screen or ready for push
+    router.back();
+
+    if (playbackOrigin.type === 'all' || playbackOrigin.type === 'favorites' || playbackOrigin.type === 'search') {
+      router.replace({
+        pathname: '/',
+        params: {
+          q: playbackOrigin.searchQuery,
+          f: playbackOrigin.favoritesOnly ? 'true' : 'false'
+        }
+      });
+    } else {
+      router.push({
+        pathname: '/group',
+        params: { 
+          title: playbackOrigin.title, 
+          type: playbackOrigin.type,
+          f: playbackOrigin.favoritesOnly ? 'true' : 'false'
+        }
+      });
+    }
+  };
+
+  const goToArtist = () => {
+    router.back(); // Dismiss modal
+    router.push({
+      pathname: '/group',
+      params: { title: currentTrack.artist, type: 'artist' }
+    });
+  };
+
+  const goToAlbum = () => {
+    if (currentTrack.album) {
+      router.back(); // Dismiss modal
+      router.push({
+        pathname: '/group',
+        params: { title: currentTrack.album, type: 'album' }
+      });
+    }
+  };
 
   const handleSlidingStart = () => {
     setIsSeeking(true);
@@ -141,10 +210,13 @@ export default function PlayerScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.headerIcon}>
           <Ionicons name="chevron-down" size={30} color="#fff" />
         </TouchableOpacity>
-        <View style={styles.headerTextContainer}>
+        <TouchableOpacity style={styles.headerTextContainer} onPress={handleOriginPress}>
           <Text style={styles.headerSubtitle}>PLAYING FROM</Text>
-          <Text style={styles.headerQueueTitle} numberOfLines={1}>{queueTitle.toUpperCase()}</Text>
-        </View>
+          <Text style={styles.headerQueueTitle} numberOfLines={1}>
+            {playbackOrigin?.title.toUpperCase() || 'ALL SONGS'}
+            {playbackOrigin?.favoritesOnly && ' • FAVORITES'}
+          </Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={toggleLyricsView} style={styles.headerIcon}>
           <Ionicons name="musical-notes" size={24} color={showLyrics ? "#1DB954" : "#fff"} />
         </TouchableOpacity>
@@ -186,19 +258,28 @@ export default function PlayerScreen() {
       <View style={styles.controlsContainer}>
         <View style={styles.trackInfoRow}>
           <View style={styles.trackInfo}>
-            <Text style={styles.trackTitle}>{currentTrack.title}</Text>
-            <Text style={styles.trackArtist}>{currentTrack.artist}</Text>
+            <TouchableOpacity onPress={goToAlbum}>
+              <Text style={styles.trackTitle}>{currentTrack.title}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={goToArtist}>
+              <Text style={styles.trackArtist}>{currentTrack.artist}</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={() => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            toggleFavorite(currentTrack.id);
-          }}>
-            <Ionicons 
-              name={isFavorite ? "heart" : "heart-outline"} 
-              size={28} 
-              color={isFavorite ? "#1DB954" : "#fff"} 
-            />
-          </TouchableOpacity>
+          <View style={styles.trackActions}>
+            <TouchableOpacity onPress={() => handleSingleTrackAction(currentTrack)} style={styles.actionIcon}>
+              <Ionicons name="add-outline" size={28} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              toggleFavorite(currentTrack.id);
+            }}>
+              <Ionicons 
+                name={isFavorite ? "heart" : "heart-outline"} 
+                size={28} 
+                color={isFavorite ? "#1DB954" : "#fff"} 
+              />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Progress Bar */}
@@ -271,6 +352,16 @@ export default function PlayerScreen() {
       />
       
       <Toast visible={toastVisible} message={toastMessage} />
+
+      <TrackActionSheet
+        visible={actionSheetVisible}
+        onClose={() => setActionSheetVisible(false)}
+        track={activeTrack}
+        playlists={playlists}
+        onAddToPlaylist={handleActionSheetAddToPlaylist}
+        onGoToArtist={() => activeTrack && goToArtist()}
+        onGoToAlbum={() => activeTrack && activeTrack.album && goToAlbum()}
+      />
     </SafeAreaView>
   );
 }
@@ -364,6 +455,14 @@ const styles = StyleSheet.create({
   },
   trackInfo: {
     flex: 1,
+  },
+  trackActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  actionIcon: {
+    padding: 5,
   },
   trackTitle: {
     color: '#fff',

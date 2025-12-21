@@ -22,6 +22,21 @@ export const initDatabase = async () => {
     );
     CREATE INDEX IF NOT EXISTS idx_artist ON tracks(artist);
     CREATE INDEX IF NOT EXISTS idx_album ON tracks(album);
+
+    CREATE TABLE IF NOT EXISTS playlists (
+      id TEXT PRIMARY KEY NOT NULL,
+      title TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS playlist_tracks (
+      playlistId TEXT NOT NULL,
+      trackId TEXT NOT NULL,
+      orderIndex INTEGER NOT NULL,
+      PRIMARY KEY (playlistId, trackId),
+      FOREIGN KEY (playlistId) REFERENCES playlists(id) ON DELETE CASCADE,
+      FOREIGN KEY (trackId) REFERENCES tracks(id) ON DELETE CASCADE
+    );
   `);
 
   // Migration: Add lrc column if it doesn't exist (for existing users)
@@ -116,4 +131,74 @@ export const getTrackById = async (id: string): Promise<Track | null> => {
     artwork: row.artwork,
     lrc: row.lrc || undefined
   };
+};
+
+export const getAllPlaylists = async () => {
+  const database = await initDatabase();
+  return await database.getAllAsync<any>('SELECT * FROM playlists ORDER BY createdAt DESC');
+};
+
+export const createPlaylist = async (title: string) => {
+  const database = await initDatabase();
+  const id = Date.now().toString();
+  await database.runAsync(
+    'INSERT INTO playlists (id, title, createdAt) VALUES (?, ?, ?)',
+    [id, title, Date.now()]
+  );
+  return id;
+};
+
+export const addTracksToPlaylist = async (playlistId: string, trackIds: string[]) => {
+  const database = await initDatabase();
+  await database.withTransactionAsync(async () => {
+    const lastOrderRow = await database.getFirstAsync<any>(
+      'SELECT MAX(orderIndex) as maxOrder FROM playlist_tracks WHERE playlistId = ?',
+      [playlistId]
+    );
+    let nextOrder = (lastOrderRow?.maxOrder ?? -1) + 1;
+
+    for (const trackId of trackIds) {
+      await database.runAsync(
+        'INSERT OR IGNORE INTO playlist_tracks (playlistId, trackId, orderIndex) VALUES (?, ?, ?)',
+        [playlistId, trackId, nextOrder++]
+      );
+    }
+  });
+};
+
+export const removeFromPlaylist = async (playlistId: string, trackIds: string[]) => {
+  const database = await initDatabase();
+  await database.withTransactionAsync(async () => {
+    for (const trackId of trackIds) {
+      await database.runAsync(
+        'DELETE FROM playlist_tracks WHERE playlistId = ? AND trackId = ?',
+        [playlistId, trackId]
+      );
+    }
+  });
+};
+
+export const getPlaylistTracks = async (playlistId: string): Promise<Track[]> => {
+  const database = await initDatabase();
+  const rows = await database.getAllAsync<any>(
+    `SELECT t.* FROM tracks t
+     JOIN playlist_tracks pt ON t.id = pt.trackId
+     WHERE pt.playlistId = ?
+     ORDER BY pt.orderIndex ASC`,
+    [playlistId]
+  );
+  return rows.map(row => ({
+    id: row.id,
+    title: row.title,
+    artist: row.artist,
+    album: row.album,
+    uri: row.uri,
+    artwork: row.artwork,
+    lrc: row.lrc || undefined
+  }));
+};
+
+export const deletePlaylist = async (playlistId: string) => {
+  const database = await initDatabase();
+  await database.runAsync('DELETE FROM playlists WHERE id = ?', [playlistId]);
 };
