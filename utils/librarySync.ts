@@ -23,36 +23,44 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
     await logToFile(`Discovered ${totalFiles} audio files.`);
     if (onDiscovery) onDiscovery(totalFiles);
 
-    // Phase 2: Bulk check existence
+    // Phase 2: Processing
     await logToFile('Phase 2: Processing files and checking database...');
-    const existingUris = await getAllTrackUris();
-    const tracks: Track[] = [];
+    
+    // Optimization: Load all existing tracks into memory once (O(1) lookup vs O(N) DB queries)
+    const allDbTracks = await getAllTracks();
+    const existingTracksMap = new Map<string, Track>();
+    allDbTracks.forEach(t => existingTracksMap.set(t.uri, t));
+    
+    const finalTracks: Track[] = [];
     const albumArtCache = new Map<string, string>();
+    let tracksToInsert: Track[] = [];
 
     // Concurrency control: process files in chunks
-    const CHUNK_SIZE = 3;
+    const CHUNK_SIZE = 5; // Slight increase as DB bottleneck is removed
     for (let i = 0; i < totalFiles; i += CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + CHUNK_SIZE);
-      await logToFile(`Processing chunk ${Math.floor(i/CHUNK_SIZE) + 1} (${chunk.length} files)...`);
       
+      // Yield to UI thread every few chunks to prevent freezing
+      if (i % (CHUNK_SIZE * 5) === 0) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
       await Promise.all(chunk.map(async (fullUri) => {
         try {
+          // Check memory cache first
+          if (existingTracksMap.has(fullUri)) {
+            const existing = existingTracksMap.get(fullUri)!;
+            finalTracks.push(existing);
+            if (onTrackProcessed) onTrackProcessed(existing);
+            return;
+          }
+
+          // It's a new track, parse metadata
           const fileName = fullUri.split('/').pop() || "";
           const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
           const dirPath = fullUri.substring(0, fullUri.lastIndexOf('/') + 1);
           
           let lrcContent = undefined;
-          
-          if (existingUris.has(fullUri)) {
-            const existing = await getTrackById(fullUri);
-            if (existing) {
-              tracks.push(existing);
-              if (onTrackProcessed) onTrackProcessed(existing);
-              return;
-            }
-          }
-
-          // It's a new track, parse metadata
           const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
           
           // Try to find LRC
@@ -61,7 +69,6 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
             const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
             if (lrcInfo.exists) {
               lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-              await logToFile(`Found lyrics for: ${fileName}`);
             }
           } catch (e) {}
 
@@ -76,33 +83,45 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
             trackNumber: metadata.trackNumber
           };
 
-          tracks.push(newTrack);
+          finalTracks.push(newTrack);
+          tracksToInsert.push(newTrack);
+          
           if (onTrackProcessed) onTrackProcessed(newTrack);
         } catch (e) {
           await logToFile(`Error processing file in sync: ${fullUri} - ${e}`, 'ERROR');
         }
       }));
+
+      // Batch Insert: Save every 50 new tracks to DB to keep memory low
+      if (tracksToInsert.length >= 50) {
+        await insertTracks(tracksToInsert);
+        tracksToInsert = [];
+      }
+    }
+
+    // Save remaining new tracks
+    if (tracksToInsert.length > 0) {
+      await insertTracks(tracksToInsert);
     }
 
     // Phase 3: Cleanup missing files
+    // Use the Set logic against our initial DB snapshot
     await logToFile('Phase 3: Cleaning up missing files from database...');
-    const dbTracks = await getAllTracks();
     const foundUris = new Set(filePaths);
     let deletedCount = 0;
-    for (const dbTrack of dbTracks) {
-      if (!foundUris.has(dbTrack.uri)) {
-        await deleteTrack(dbTrack.id);
+    
+    // We iterate the map we loaded at the start
+    for (const [uri, track] of existingTracksMap.entries()) {
+      if (!foundUris.has(uri)) {
+        await deleteTrack(track.id);
         deletedCount++;
       }
     }
+    
     if (deletedCount > 0) await logToFile(`Deleted ${deletedCount} missing tracks from database.`);
-
-    // Phase 4: Final batch save
-    await logToFile(`Phase 4: Saving ${tracks.length} tracks to database...`);
-    await insertTracks(tracks);
     
     await logToFile('Library sync completed successfully.');
-    return tracks;
+    return finalTracks;
   } catch (e) {
     await logToFile(`Library Sync Error: ${e}`, 'ERROR');
     return [];
