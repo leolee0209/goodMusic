@@ -8,6 +8,7 @@ import { Track, PlaybackOrigin } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
 import { TrackActionSheet } from '../components/TrackActionSheet';
+import { normalizeForSearch } from '../utils/stringUtils';
 
 export default function GroupDetailScreen() {
   const router = useRouter();
@@ -123,18 +124,6 @@ export default function GroupDetailScreen() {
       pathname: '/group',
       params: { title: album, type: 'album' }
     });
-  };
-
-  /**
-   * Normalize text for search: remove accents and standardize apostrophes.
-   */
-  const normalizeForSearch = (text: string) => {
-    return text
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "") // Remove accents
-      .replace(/[''""`]/g, "'") // Standardize apostrophes/quotes
-      .trim();
   };
 
   // Derive activeGroup from title and type params using the full library

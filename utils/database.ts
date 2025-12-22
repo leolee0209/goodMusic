@@ -1,6 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { Track } from '../types';
 import { logToFile } from './logger';
+import { normalizeForSearch } from './stringUtils';
 
 let db: SQLite.SQLiteDatabase | null = null;
 

@@ -124,14 +124,20 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     playerReadyPromise.current = (async () => {
         try {
             await logToFile('Initializing TrackPlayer native service...');
-            const isSetup = await TrackPlayer.isServiceRunning().catch(() => false);
-            if (!isSetup) {
+            
+            try {
                 await TrackPlayer.setupPlayer({
                     waitForBuffer: true
                 });
                 await logToFile('TrackPlayer.setupPlayer() successful.');
-            } else {
-                await logToFile('TrackPlayer service is already running.');
+            } catch (e: any) {
+                // Check for "already initialized" errors which are safe to ignore
+                const errorStr = String(e);
+                if (errorStr.includes('already initialized') || errorStr.includes('already_initialized')) {
+                    await logToFile('TrackPlayer was already initialized.');
+                } else {
+                    throw e;
+                }
             }
             
             await TrackPlayer.updateOptions({
@@ -149,10 +155,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               ],
               progressUpdateEventInterval: 1,
               android: {
-                  appKilledPlaybackBehavior: 'stop-playback' as any
+                  appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlayback
               }
             });
             await logToFile('TrackPlayer capabilities updated.');
+
+            // Verify initialization by calling a simple method
+            await TrackPlayer.getState();
+            await logToFile('TrackPlayer verification successful.');
           } catch (e) {
             await logToFile(`Critical: TrackPlayer setup failed: ${e}`, 'ERROR');
             playerReadyPromise.current = null; 

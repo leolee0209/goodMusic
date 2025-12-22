@@ -7,7 +7,7 @@ import TrackPlayer from 'react-native-track-player';
 
 global.Buffer = global.Buffer || Buffer;
 
-TrackPlayer.registerPlaybackService(() => require('../service'));
+TrackPlayer.registerPlaybackService(() => require('../service').default);
 
 export default function RootLayout() {
   return (
