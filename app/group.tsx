@@ -149,6 +149,7 @@ export default function GroupDetailScreen() {
 
     const albumsMap: Record<string, Track[]> = {};
     activeGroup.tracks.forEach(track => {
+      // If we are filtering by favorites, only include tracks that are favorites
       if (showFavoritesOnly && !favorites.includes(track.id)) return;
       
       const album = track.album || 'Unknown Album';
@@ -162,11 +163,16 @@ export default function GroupDetailScreen() {
       id: `album-${name}`
     }));
 
+    // SEARCH FILTERING: Apply keyword matching to album names
     if (searchQuery.trim() !== '') {
+      const normalizedQuery = normalizeForSearch(searchQuery);
+      const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
+      
       albums = albums.filter(album => {
           const name = normalizeForSearch(album.name);
           return keywords.every(k => name.includes(k));
       });
+      console.log(`[GroupSearch] Query: "${searchQuery}" -> Albums found: ${albums.length}`);
     }
 
     return albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));

@@ -178,6 +178,10 @@ export default function HomeScreen() {
     artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
+    if (isSearching) {
+        console.log(`[Search] Query: "${searchQuery}" -> Songs: ${songs.length}, Artists: ${artists.length}, Albums: ${albums.length}`);
+    }
+
     return { songs, artists, albums };
   }, [library, searchQuery, showFavoritesOnly, favorites]);
 

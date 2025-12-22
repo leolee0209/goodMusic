@@ -52,41 +52,28 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Helper to ensure URI has file:// prefix for RNTP
   const ensureFileUri = (uri: string) => {
       if (!uri) return uri;
+      let result = uri;
       if (uri.startsWith('/') && !uri.startsWith('file://')) {
-          return `file://${uri}`;
+          result = `file://${uri}`;
       }
-      return uri;
-  };
-
-  /**
-   * IMPORTANT: iOS absolute paths change across app launches (UUIDs change).
-   * We need to fix stored URIs if they point to an old Caches/artworks directory.
-   */
-  const resolveArtworkUri = (uri: string | undefined) => {
-    if (!uri) return undefined;
-    if (Platform.OS !== 'ios') return ensureFileUri(uri);
-
-    if (uri.includes('/Library/Caches/')) {
-        const relativePath = uri.split('/Library/Caches/').pop();
-        if (relativePath) {
-            const resolved = FileSystem.cacheDirectory + relativePath;
-            return resolved;
-        }
-    }
-    return ensureFileUri(uri);
+      return result;
   };
 
   // Helper to serialize Track to RNTP Track
-  const toRntpTrack = (track: Track) => ({
-    id: track.id,
-    url: ensureFileUri(track.uri),
-    title: track.title,
-    artist: track.artist,
-    album: track.album || 'Unknown Album',
-    artwork: resolveArtworkUri(track.artwork),
-    duration: track.duration ? track.duration / 1000 : 0, 
-    original: track 
-  });
+  const toRntpTrack = (track: Track) => {
+    const rntpTrack = {
+      id: track.id,
+      url: ensureFileUri(track.uri),
+      title: track.title,
+      artist: track.artist,
+      album: track.album || 'Unknown Album',
+      artwork: resolveArtworkUri(track.artwork),
+      duration: track.duration ? track.duration / 1000 : 0, 
+      original: track 
+    };
+    logToFile(`Mapping track for RNTP: ${track.title} | URL: ${rntpTrack.url} | Dur: ${rntpTrack.duration}`);
+    return rntpTrack;
+  };
 
   const queueTask = (task: () => Promise<void>) => {
     updateQueue.current = updateQueue.current.then(async () => {
@@ -123,18 +110,25 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     playerReadyPromise.current = (async () => {
         try {
-            await logToFile('Initializing TrackPlayer native service...');
+            await logToFile('Setup: Initializing TrackPlayer native service...');
             
             try {
-                await TrackPlayer.setupPlayer({
-                    waitForBuffer: true
-                });
-                await logToFile('TrackPlayer.setupPlayer() successful.');
+                const serviceRunning = await TrackPlayer.isServiceRunning().catch(() => false);
+                if (!serviceRunning) {
+                    await TrackPlayer.setupPlayer({
+                        waitForBuffer: true,
+                        minBuffer: 0.5,
+                        maxBuffer: 3,
+                    });
+                    await logToFile('Setup: TrackPlayer.setupPlayer() successful.');
+                } else {
+                    await logToFile('Setup: TrackPlayer service is already running.');
+                }
             } catch (e: any) {
                 // Check for "already initialized" errors which are safe to ignore
                 const errorStr = String(e);
                 if (errorStr.includes('already initialized') || errorStr.includes('already_initialized')) {
-                    await logToFile('TrackPlayer was already initialized.');
+                    await logToFile('Setup: TrackPlayer was already initialized.');
                 } else {
                     throw e;
                 }
@@ -158,13 +152,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlayback
               }
             });
-            await logToFile('TrackPlayer capabilities updated.');
+            await logToFile('Setup: Capabilities updated.');
 
             // Verify initialization by calling a simple method
-            await TrackPlayer.getState();
-            await logToFile('TrackPlayer verification successful.');
+            const state = await TrackPlayer.getState();
+            await logToFile(`Setup: Complete. Player State: ${state}`);
           } catch (e) {
-            await logToFile(`Critical: TrackPlayer setup failed: ${e}`, 'ERROR');
+            await logToFile(`Setup: CRITICAL FAILURE: ${e}`, 'ERROR');
             playerReadyPromise.current = null; 
             throw e;
           }
@@ -226,42 +220,89 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const playTrack = async (track: Track, newQueue?: Track[], title?: string, origin?: PlaybackOrigin) => {
     try {
+      await logToFile(`PlayTrack: Request for "${track.title}" (ID: ${track.id})`);
+      
+      // 1. Ensure Player is ready
       await setupPlayer(); 
+      
+      // 2. Prepare the logical queue
+      let finalQueue = newQueue ? [...newQueue] : [...originalPlaylist];
+      
+      // Edge case: Empty queue
+      if (finalQueue.length === 0) {
+        await logToFile('PlayTrack: Warn - Queue was empty, creating single-track queue.');
+        finalQueue = [track];
+      }
 
+      // Update Context State
       if (newQueue) {
-        await logToFile(`Action: playTrack with new queue - ${track.title} | Queue size: ${newQueue.length}`);
-        setOriginalPlaylist(newQueue);
+        setOriginalPlaylist(finalQueue);
         setQueueTitle(title || 'All Songs');
         setPlaybackOrigin(origin || null);
-        
-        let queueToPlay = newQueue;
-        if (isShuffle) {
-          const others = newQueue.filter(t => t.id !== track.id);
-          queueToPlay = [track, ...shuffleArray(others)];
-          await logToFile(`Shuffle is ON: Shuffled queue for playback.`);
-        }
-        
-        setPlaylistState(queueToPlay);
-        
-        await TrackPlayer.reset();
-        await TrackPlayer.add(queueToPlay.map(toRntpTrack));
-        await applyRepeatMode(repeatMode);
-        await TrackPlayer.play();
+        await logToFile(`PlayTrack: Context updated with new queue of ${finalQueue.length} tracks.`);
+      }
+
+      // 3. Determine Playback Order (Shuffle Logic)
+      let queueToPlay = [...finalQueue];
+      let startIndex = 0;
+
+      if (isShuffle) {
+        await logToFile('PlayTrack: Shuffle is ON. Re-ordering queue.');
+        // If shuffling, we want the clicked track to be first, and the rest randomized
+        const others = queueToPlay.filter(t => t.id !== track.id);
+        queueToPlay = [track, ...shuffleArray(others)];
+        startIndex = 0;
       } else {
-        await logToFile(`Action: playTrack (existing queue) - ${track.title}`);
-        const index = playlist.findIndex(t => t.id === track.id);
-        if (index !== -1) {
-            await TrackPlayer.skip(index);
-            await TrackPlayer.play();
-        } else {
-             await logToFile(`Track not in current playlist, resetting queue to single track.`);
-             await TrackPlayer.reset();
-             await TrackPlayer.add(toRntpTrack(track));
-             await TrackPlayer.play();
+        // Normal order: find the index of the clicked track
+        startIndex = queueToPlay.findIndex(t => t.id === track.id);
+        if (startIndex === -1) {
+          await logToFile(`PlayTrack: Warn - Track ${track.id} not found in queue. Prepending.`, 'WARN');
+          queueToPlay = [track, ...queueToPlay];
+          startIndex = 0;
         }
       }
+
+      setPlaylistState(queueToPlay);
+      
+      // 4. Update Native Player
+      await logToFile(`PlayTrack: Resetting native player...`);
+      await TrackPlayer.reset();
+      
+      const rntpTracks = queueToPlay.map(toRntpTrack);
+      await logToFile(`PlayTrack: Adding ${rntpTracks.length} tracks to native player.`);
+      await TrackPlayer.add(rntpTracks);
+      
+      // 5. Skip to correct index
+      // IMPORTANT: We must wait for 'add' to finish before skipping.
+      if (startIndex > 0) {
+        await logToFile(`PlayTrack: Skipping to index ${startIndex}.`);
+        await TrackPlayer.skip(startIndex);
+      }
+
+      // 6. Start Playback
+      await applyRepeatMode(repeatMode);
+      await TrackPlayer.play();
+      await logToFile('PlayTrack: Play command sent.');
+
+      // 7. Post-Play Verification
+      setTimeout(async () => {
+        try {
+          const state = await TrackPlayer.getState();
+          const queue = await TrackPlayer.getQueue();
+          const current = await TrackPlayer.getActiveTrackIndex();
+          await logToFile(`PlayTrack: Verification (+500ms) - State: ${state}, QueueSize: ${queue.length}, CurrentIndex: ${current}`);
+          
+          if (state === State.Error || state === State.None) {
+             await logToFile('PlayTrack: Player seems stuck in Error/None state. Attempting recovery...', 'WARN');
+             await TrackPlayer.play(); 
+          }
+        } catch (e) {
+           console.error("Verification failed", e);
+        }
+      }, 500);
+
     } catch (error) {
-      await logToFile(`Error in playTrack: ${error}`, 'ERROR');
+      await logToFile(`PlayTrack: CRITICAL ERROR: ${error}`, 'ERROR');
     }
   };
 
@@ -269,6 +310,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
         await setupPlayer();
         const state = await TrackPlayer.getState();
+        await logToFile(`Playback: togglePlayPause called. Current state: ${state}`);
         if (state === State.Playing) {
           await TrackPlayer.pause();
           await logToFile('Playback: Paused');
@@ -284,8 +326,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const seekTo = async (millis: number) => {
     try {
         await setupPlayer();
+        const state = await TrackPlayer.getState();
+        await logToFile(`Playback: seekTo ${millis}ms called. State: ${state}`);
         await TrackPlayer.seekTo(millis / 1000);
-        await logToFile(`Playback: Seek to ${millis}ms`);
+        await logToFile(`Playback: Seek to ${millis}ms successful`);
     } catch (e) {
         await logToFile(`Error seekTo: ${e}`, 'ERROR');
     }
