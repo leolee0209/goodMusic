@@ -7,6 +7,7 @@ import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { getAllTracks, initDatabase } from '../utils/database';
 import { syncLibrary } from '../utils/librarySync';
+import { logToFile } from '../utils/logger';
 
 const MusicContext = createContext<MusicContextType | undefined>(undefined);
 
@@ -55,6 +56,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const track = library.find(t => t.id === trackId);
     if (track) {
       try {
+        await logToFile(`Removing track: ${track.title} (${trackId})`);
         await import('../utils/database').then(m => m.deleteTrack(trackId));
         const fileInfo = await FileSystem.getInfoAsync(track.uri);
         if (fileInfo.exists) {
@@ -62,7 +64,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
         await refreshLibrary();
       } catch (e) {
-        console.error("Error removing track:", e);
+        await logToFile(`Error removing track: ${e}`, 'ERROR');
       }
     }
   };
@@ -75,13 +77,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   useEffect(() => {
     const configureAudio = async () => {
       try {
+        await logToFile('Configuring audio mode...');
         await setAudioModeAsync({
           playsInSilentMode: true,
           shouldPlayInBackground: true,
           interruptionMode: 'duckOthers' 
         });
       } catch (e) {
-        console.error("Error configuring audio:", e);
+        await logToFile(`Error configuring audio: ${e}`, 'ERROR');
       }
     };
     configureAudio();
@@ -100,12 +103,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     const loadData = async () => {
+      await logToFile('Loading initial data...');
       await initDatabase();
       const tracks = await getAllTracks();
       setLibrary(tracks);
       setPlaylistState(tracks);
       setOriginalPlaylist(tracks);
       await loadPlaylists();
+      await logToFile(`Loaded ${tracks.length} tracks and playlists.`);
     };
     loadData();
 
@@ -120,7 +125,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (favs !== null) setFavorites(JSON.parse(favs));
         if (lyrics !== null) setShowLyrics(JSON.parse(lyrics));
       } catch (e) {
-        console.error("Error loading preferences:", e);
+        await logToFile(`Error loading preferences: ${e}`, 'ERROR');
       }
     };
     loadPreferences();
@@ -152,6 +157,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isTransitioning.current = true;
       setCurrentTrack(track);
       setIsPlaying(true);
+      await logToFile(`Playing track: ${track.title}`);
       playerRef.current.replace(track.uri);
       if (playerRef.current && typeof (playerRef.current as any).setActiveForLockScreen === 'function') {
         (playerRef.current as any).setActiveForLockScreen(true, {
@@ -166,7 +172,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isTransitioning.current = false;
       }, 200);
     } catch (error) {
-      console.error('Error playing track:', error);
+      await logToFile(`Error playing track: ${error}`, 'ERROR');
       isTransitioning.current = false;
     }
   };
@@ -337,6 +343,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         try {
+          await logToFile('Starting folder import...');
           const musicDir = FileSystem.documentDirectory + 'music/';
           await FileSystem.makeDirectoryAsync(musicDir, { intermediates: true });
           if (Platform.OS === 'android') {
@@ -391,7 +398,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             const sorted = [...finalTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
             setLibrary(sorted);
           }
-        } catch (e) { console.warn("Folder import error:", e); }
+        } catch (e) { await logToFile(`Folder import error: ${e}`, 'WARN'); }
         resolve();
       });
     });
@@ -405,13 +412,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const lrcContent = `[00:00.00] Demo Local Track\n[00:05.00] This file is now on your device\n[00:10.00] Testing the offline capability\n[00:15.00] It works!`;
       await FileSystem.writeAsStringAsync(lrcUri, lrcContent);
       await refreshLibrary();
-    } catch (e) { console.error("Download failed:", e); }
+    } catch (e) { await logToFile(`Download failed: ${e}`, 'ERROR'); }
   };
 
   const pickAndImportFiles = async () => {
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         try {
+          await logToFile('Picking files to import...');
           const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*', 'application/octet-stream'], multiple: true, copyToCacheDirectory: true });
           if (!result.canceled) {
             const destDir = FileSystem.documentDirectory + 'music/';
@@ -447,8 +455,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               const sorted = [...finalTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
               setLibrary(sorted);
             }
+          } else {
+             await logToFile('File pick canceled by user.');
           }
-        } catch (e) { console.error("Pick and Import failed:", e); }
+        } catch (e) { await logToFile(`Pick and Import failed: ${e}`, 'ERROR'); }
         resolve();
       });
     });

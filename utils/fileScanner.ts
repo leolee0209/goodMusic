@@ -4,12 +4,13 @@ import { Track } from '../types';
 import * as mm from 'music-metadata-browser';
 import { Buffer } from 'buffer';
 import { getTrackById } from './database';
+import { logToFile } from './logger';
 
 const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg'];
 
 // Helper to extract metadata using music-metadata
 
-const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<string, string>) => {
+export const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<string, string>) => {
 
   try {
 
@@ -153,7 +154,7 @@ const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<s
 
         } catch (err) {
 
-          console.warn("Failed to save artwork:", err);
+          await logToFile(`Failed to save artwork for ${fileName}: ${err}`, 'WARN');
 
         }
 
@@ -163,7 +164,7 @@ const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<s
 
     
 
-    console.log(`Parsed ${fileName}:`, { artist, album, hasArtwork: !!artworkUri });
+    // await logToFile(`Parsed ${fileName}: ${artist} - ${album} (Art: ${!!artworkUri})`);
 
     
 
@@ -195,7 +196,7 @@ const parseMetadata = async (uri: string, fileName: string, albumArtCache: Map<s
 
   } catch (e) {
 
-    console.warn("Metadata parse failed for", fileName, e);
+    await logToFile(`Metadata parse failed for ${fileName}: ${e}`, 'WARN');
 
     return {
 
@@ -525,9 +526,7 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
 
 
 
-      console.error("Error processing file:", fullUri, error);
-
-
+      await logToFile(`Error processing file in scanFolder: ${fullUri} - ${error}`, 'ERROR');
 
     }
 

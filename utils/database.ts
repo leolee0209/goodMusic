@@ -1,11 +1,13 @@
 import * as SQLite from 'expo-sqlite';
 import { Track } from '../types';
+import { logToFile } from './logger';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
 export const initDatabase = async () => {
   if (db) return db;
   
+  await logToFile('Initializing database...');
   db = await SQLite.openDatabaseAsync('music_library.db');
   
   await db.execAsync(`
@@ -50,26 +52,30 @@ export const initDatabase = async () => {
   const hasLrc = tableInfo.some(column => column.name === 'lrc');
   if (!hasLrc) {
     try {
+      await logToFile('Adding lrc column to tracks table...');
       await db.execAsync("ALTER TABLE tracks ADD COLUMN lrc TEXT");
     } catch (e) {
-      console.log("Migration (lrc column) already applied or failed:", e);
+      await logToFile(`Migration (lrc column) already applied or failed: ${e}`, 'WARN');
     }
   }
 
   const hasTrackNumber = tableInfo.some(column => column.name === 'trackNumber');
   if (!hasTrackNumber) {
     try {
+      await logToFile('Adding trackNumber column to tracks table...');
       await db.execAsync("ALTER TABLE tracks ADD COLUMN trackNumber INTEGER");
     } catch (e) {
-      console.log("Migration (trackNumber column) already applied or failed:", e);
+      await logToFile(`Migration (trackNumber column) already applied or failed: ${e}`, 'WARN');
     }
   }
   
+  await logToFile('Database initialized.');
   return db;
 };
 
 export const insertTracks = async (tracks: Track[]) => {
   const database = await initDatabase();
+  await logToFile(`Inserting/Updating ${tracks.length} tracks in database...`);
   
   // Batch insert for performance
   // We use "INSERT OR REPLACE" to handle updates
@@ -81,6 +87,7 @@ export const insertTracks = async (tracks: Track[]) => {
       );
     }
   });
+  await logToFile('Track insertion completed.');
 };
 
 export const getAllTracks = async (): Promise<Track[]> => {

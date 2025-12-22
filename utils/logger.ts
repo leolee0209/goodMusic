@@ -1,0 +1,53 @@
+import * as FileSystem from 'expo-file-system/legacy';
+
+const LOG_FILE_PATH = FileSystem.documentDirectory + 'app_logs.txt';
+const MAX_LOG_SIZE = 1024 * 1024; // 1MB
+
+export const logToFile = async (message: string, level: 'INFO' | 'WARN' | 'ERROR' = 'INFO') => {
+  const timestamp = new Date().toISOString();
+  const logEntry = `[${timestamp}] [${level}] ${message}\n`;
+
+  // Keep console output for development debugging
+  if (level === 'ERROR') {
+      console.error(message);
+  } else {
+      console.log(message);
+  }
+
+  try {
+    const fileInfo = await FileSystem.getInfoAsync(LOG_FILE_PATH);
+    if (fileInfo.exists) {
+        // Simple size check rotation
+        if (fileInfo.size > MAX_LOG_SIZE) {
+            await FileSystem.deleteAsync(LOG_FILE_PATH);
+            await FileSystem.writeAsStringAsync(LOG_FILE_PATH, "[SYSTEM] Log rotated due to size limit.\n" + logEntry);
+        } else {
+            const currentContent = await FileSystem.readAsStringAsync(LOG_FILE_PATH);
+            await FileSystem.writeAsStringAsync(LOG_FILE_PATH, currentContent + logEntry);
+        }
+    } else {
+        await FileSystem.writeAsStringAsync(LOG_FILE_PATH, logEntry);
+    }
+  } catch (error) {
+    console.error("Failed to write to log file:", error);
+  }
+};
+
+export const getLogContent = async () => {
+    try {
+        const info = await FileSystem.getInfoAsync(LOG_FILE_PATH);
+        if (!info.exists) return "";
+        return await FileSystem.readAsStringAsync(LOG_FILE_PATH);
+    } catch (e) {
+        console.error("Failed to read logs:", e);
+        return "";
+    }
+};
+
+export const clearLogs = async () => {
+    try {
+        await FileSystem.deleteAsync(LOG_FILE_PATH, { idempotent: true });
+    } catch (e) {
+        console.error("Failed to clear logs:", e);
+    }
+};
