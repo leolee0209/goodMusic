@@ -99,8 +99,7 @@ export default function PlayerScreen() {
       return;
     }
 
-    // Dismiss modal first so we are back at the previous screen or ready for push
-    router.back();
+    router.dismissAll();
 
     if (playbackOrigin.type === 'all' || playbackOrigin.type === 'favorites' || playbackOrigin.type === 'search') {
       router.replace({
@@ -123,7 +122,7 @@ export default function PlayerScreen() {
   };
 
   const goToArtist = () => {
-    router.back(); // Dismiss modal
+    router.dismissAll();
     router.push({
       pathname: '/group',
       params: { title: currentTrack.artist, type: 'artist' }
@@ -132,7 +131,7 @@ export default function PlayerScreen() {
 
   const goToAlbum = () => {
     if (currentTrack.album) {
-      router.back(); // Dismiss modal
+      router.dismissAll();
       router.push({
         pathname: '/group',
         params: { title: currentTrack.album, type: 'album' }

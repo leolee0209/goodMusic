@@ -144,9 +144,6 @@ export default function GroupDetailScreen() {
   const artistAlbums = useMemo(() => {
     if (!activeGroup || activeGroup.type !== 'artist') return [];
     
-    const normalizedQuery = normalizeForSearch(searchQuery);
-    const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
-
     const albumsMap: Record<string, Track[]> = {};
     activeGroup.tracks.forEach(track => {
       // If we are filtering by favorites, only include tracks that are favorites
@@ -157,25 +154,57 @@ export default function GroupDetailScreen() {
       albumsMap[album].push(track);
     });
 
-    let albums = Object.entries(albumsMap).map(([name, tracks]) => ({
+    let allAlbums = Object.entries(albumsMap).map(([name, tracks]) => ({
       name,
       tracks,
-      id: `album-${name}`
+      id: `album-${name}`,
+      type: 'album'
     }));
 
-    // SEARCH FILTERING: Apply keyword matching to album names
+    // SEARCH FILTERING
     if (searchQuery.trim() !== '') {
       const normalizedQuery = normalizeForSearch(searchQuery);
       const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
       
-      albums = albums.filter(album => {
-          const name = normalizeForSearch(album.name);
-          return keywords.every(k => name.includes(k));
+      const matchName: typeof allAlbums = [];
+      const matchSongs: typeof allAlbums = [];
+
+      allAlbums.forEach(album => {
+          const albumNameNorm = normalizeForSearch(album.name);
+          // Check Name Match
+          if (keywords.every(k => albumNameNorm.includes(k))) {
+              matchName.push(album);
+              return;
+          }
+
+          // Check Song Match
+          const hasMatchingSong = album.tracks.some(track => {
+               const title = normalizeForSearch(track.title);
+               return keywords.every(k => title.includes(k));
+          });
+
+          if (hasMatchingSong) {
+              matchSongs.push(album);
+          }
       });
-      console.log(`[GroupSearch] Query: "${searchQuery}" -> Albums found: ${albums.length}`);
+
+      matchName.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      matchSongs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+      const results: any[] = [];
+      if (matchName.length > 0) {
+          results.push({ type: 'header', title: 'Matching Albums', id: 'hdr-matches' });
+          results.push(...matchName);
+      }
+      if (matchSongs.length > 0) {
+          results.push({ type: 'header', title: 'Contains Matching Songs', id: 'hdr-contains' });
+          results.push(...matchSongs);
+      }
+      console.log(`[GroupSearch] Query: "${searchQuery}" -> NameMatches: ${matchName.length}, SongMatches: ${matchSongs.length}`);
+      return results;
     }
 
-    return albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    return allAlbums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
   }, [activeGroup, searchQuery, showFavoritesOnly, favorites]);
 
   const filteredTracks = useMemo(() => {
@@ -463,7 +492,10 @@ export default function GroupDetailScreen() {
       ) : (
         <FlatList
           data={artistAlbums}
-          renderItem={renderAlbumItem}
+          renderItem={({ item }) => {
+            if (item.type === 'header') return <Text style={[styles.sectionHeader, { color: themeColor, paddingHorizontal: 16 }]}>{item.title}</Text>;
+            return renderAlbumItem({ item });
+          }}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.listContent}
         />
@@ -608,6 +640,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 100,
     paddingTop: 10,
+  },
+  sectionHeader: { 
+    fontSize: 14, 
+    fontWeight: 'bold', 
+    textTransform: 'uppercase', 
+    marginTop: 20, 
+    marginBottom: 10, 
+    letterSpacing: 1 
   },
   item: {
     flexDirection: 'row',

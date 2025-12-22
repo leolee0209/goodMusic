@@ -276,7 +276,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // IMPORTANT: We must wait for 'add' to finish before skipping.
       if (startIndex > 0) {
         await logToFile(`PlayTrack: Skipping to index ${startIndex}.`);
-        await TrackPlayer.skip(startIndex);
+        try {
+            // Short delay to ensure native queue is ready
+            await new Promise(resolve => setTimeout(resolve, 50));
+            await TrackPlayer.skip(startIndex);
+        } catch (e) {
+            await logToFile(`PlayTrack: Skip failed initially: ${e}. Retrying after delay...`, 'WARN');
+            await new Promise(resolve => setTimeout(resolve, 300));
+            await TrackPlayer.skip(startIndex);
+        }
       }
 
       // 6. Start Playback
