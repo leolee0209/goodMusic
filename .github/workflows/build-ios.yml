@@ -1,4 +1,4 @@
-name: Build Unsigned iOS IPA (Turbo)
+name: Build Unsigned iOS IPA
 on:
   workflow_dispatch:
 
@@ -24,19 +24,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Calculate Prebuild Cache Key
-        id: cache-key
-        run: echo "key=${{ runner.os }}-ios-prebuild-${{ hashFiles('app.json', 'package-lock.json', 'patches/**') }}" >> $GITHUB_OUTPUT
-
-      - name: Cache Prebuild (iOS)
-        id: cache-prebuild
-        uses: actions/cache@v4
-        with:
-          path: ios
-          key: ${{ steps.cache-key.outputs.key }}
-
       - name: Expo Prebuild
-        if: steps.cache-prebuild.outputs.cache-hit != 'true'
         run: npx expo prebuild --platform ios
 
       - name: Build Unsigned IPA
