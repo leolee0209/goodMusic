@@ -14,6 +14,7 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
 
   try {
     let readLength = 512 * 1024; // Default fallback: 512KB
+    let formatLabel = 'UNKNOWN';
     
     // Step 1: Peek header to determine exact metadata size
     try {
@@ -26,11 +27,13 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
       
       // ID3v2 (MP3)
       if (headerBuffer.slice(0, 3).toString() === 'ID3') {
+        formatLabel = 'MP3/ID3v2';
         const tagSize = ((headerBuffer[6] & 0x7f) << 21) | ((headerBuffer[7] & 0x7f) << 14) | ((headerBuffer[8] & 0x7f) << 7) | (headerBuffer[9] & 0x7f);
         readLength = Math.min(tagSize + 10, 10 * 1024 * 1024); 
       } 
       // MPEG-4 (M4A/MP4) - Atom based
       else if (headerBuffer.slice(4, 8).toString() === 'ftyp') {
+        formatLabel = 'MPEG-4';
         const ftypSize = headerBuffer.readUInt32BE(0);
         // Peek further to see if 'moov' follows 'ftyp' (common in optimized files)
         const nextHeader = await FileSystem.readAsStringAsync(uri, {
@@ -49,9 +52,12 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
       }
       // FLAC
       else if (headerBuffer.slice(0, 4).toString() === 'fLaC') {
+        formatLabel = 'FLAC';
         readLength = 1024 * 1024; // FLAC tags are usually in the first 1MB
       }
-    } catch (e) {}
+    } catch (e) {
+        await logToFile(`Header peek failed for ${fileName}: ${e}`, 'WARN');
+    }
 
     // Step 2: Read the determined length
     const fileContent = await FileSystem.readAsStringAsync(uri, {
@@ -72,8 +78,8 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
 
     // Parse with cover extraction enabled
     const metadata = await mm.parseBuffer(buffer, mimeType, { 
-      duration: false, 
-      skipCovers: false, // Enable covers
+      duration: true, 
+      skipCovers: false, 
       skipPostHeaders: true 
     });
     
@@ -87,26 +93,21 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
 
     // Artwork Logic
     if (album !== 'Unknown Album' && albumArtCache.has(album)) {
-      // Use cached URI for this album
       artworkUri = albumArtCache.get(album);
     } else if (metadata.common.picture && metadata.common.picture.length > 0) {
       const pic = metadata.common.picture[0];
       if (pic.data) {
         try {
-          // Create cache directory if needed
           const cacheDir = FileSystem.cacheDirectory + 'artworks/';
           const dirInfo = await FileSystem.getInfoAsync(cacheDir);
           if (!dirInfo.exists) {
             await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
           }
 
-          // Generate unique filename (sanitize album name + timestamp/random)
           const safeName = (album + '_' + artist).replace(/[^a-z0-9]/gi, '_').substring(0, 50);
-          const artFileName = `art_${safeName}.jpg`; // Assume jpg/png usually
+          const artFileName = `art_${safeName}.jpg`; 
           const artUri = cacheDir + artFileName;
 
-          // Write buffer to file
-          // music-metadata returns Buffer. convert to Base64 to write.
           const base64Art = pic.data.toString('base64');
           await FileSystem.writeAsStringAsync(artUri, base64Art, {
             encoding: FileSystem.EncodingType.Base64
@@ -114,7 +115,6 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
 
           artworkUri = artUri;
           
-          // Cache it if album is valid
           if (album !== 'Unknown Album') {
             albumArtCache.set(album, artUri);
           }
@@ -124,6 +124,8 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
       }
     }
     
+    await logToFile(`Parsed ${fileName}: ${formatLabel} | ${title} - ${artist} | Dur: ${duration}ms | Art: ${!!artworkUri} | Read: ${Math.round(readLength/1024)}KB`);
+
     return {
       title,
       artist,
@@ -133,7 +135,7 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
       duration
     };
   } catch (e) {
-    await logToFile(`Metadata parse failed for ${fileName}: ${e}`, 'WARN');
+    await logToFile(`Metadata parse failed for ${fileName}: ${e}`, 'ERROR');
     return {
       title: fileName.replace(/\.[^/.]+$/, ""),
       artist: 'Unknown Artist',
@@ -175,17 +177,16 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
   const tracks: Track[] = [];
   const albumArtCache = new Map<string, string>();
   
-  // Quick discovery
+  await logToFile(`Starting scanFolder for: ${folderUri}`);
   const filePaths = await discoverAudioFiles(folderUri);
+  await logToFile(`Discovered ${filePaths.length} files in folder.`);
   
-  // Process discovered files
   for (const fullUri of filePaths) {
     try {
       const fileName = fullUri.split('/').pop() || "";
       const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
       const dirPath = fullUri.substring(0, fullUri.lastIndexOf('/') + 1);
       
-      // Try to find LRC in the same directory
       const lrcUri = dirPath + nameWithoutExt + '.lrc';
       let lrcContent = undefined;
       try {
@@ -213,7 +214,8 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
           uri: fullUri,
           artwork: metadata.artwork,
           lrc: lrcContent,
-          trackNumber: metadata.trackNumber
+          trackNumber: metadata.trackNumber,
+          duration: metadata.duration
         };
       }
 
@@ -224,5 +226,6 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
     }
   }
 
+  await logToFile(`scanFolder completed. Processed ${tracks.length} tracks.`);
   return tracks;
 };

@@ -125,6 +125,18 @@ export default function GroupDetailScreen() {
     });
   };
 
+  /**
+   * Normalize text for search: remove accents and standardize apostrophes.
+   */
+  const normalizeForSearch = (text: string) => {
+    return text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Remove accents
+      .replace(/[''""`]/g, "'") // Standardize apostrophes/quotes
+      .trim();
+  };
+
   // Derive activeGroup from title and type params using the full library
   const activeGroup = useMemo(() => {
     if (!title || !type) return null;
@@ -143,6 +155,9 @@ export default function GroupDetailScreen() {
   const artistAlbums = useMemo(() => {
     if (!activeGroup || activeGroup.type !== 'artist') return [];
     
+    const normalizedQuery = normalizeForSearch(searchQuery);
+    const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
+
     const albumsMap: Record<string, Track[]> = {};
     activeGroup.tracks.forEach(track => {
       if (showFavoritesOnly && !favorites.includes(track.id)) return;
@@ -159,12 +174,10 @@ export default function GroupDetailScreen() {
     }));
 
     if (searchQuery.trim() !== '') {
-      const lowerQuery = searchQuery.toLowerCase();
-      const keywords = lowerQuery.split(/\s+/).filter(k => k.length > 0);
-      
-      albums = albums.filter(album => 
-        keywords.every(k => album.name.toLowerCase().includes(k))
-      );
+      albums = albums.filter(album => {
+          const name = normalizeForSearch(album.name);
+          return keywords.every(k => name.includes(k));
+      });
     }
 
     return albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
@@ -179,13 +192,13 @@ export default function GroupDetailScreen() {
     }
 
     if (searchQuery.trim() !== '') {
-      const lowerQuery = searchQuery.toLowerCase();
-      const keywords = lowerQuery.split(/\s+/).filter(k => k.length > 0);
+      const normalizedQuery = normalizeForSearch(searchQuery);
+      const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
 
       filtered = filtered.filter(track => {
-        const title = track.title.toLowerCase();
-        const artist = track.artist.toLowerCase();
-        const album = (track.album || '').toLowerCase();
+        const title = normalizeForSearch(track.title);
+        const artist = normalizeForSearch(track.artist);
+        const album = normalizeForSearch(track.album || '');
         
         return keywords.every(k => title.includes(k) || artist.includes(k) || album.includes(k));
       });
@@ -278,7 +291,7 @@ export default function GroupDetailScreen() {
         >
           <View style={styles.artworkPlaceholder}>
              {item.artwork ? (
-               <Image source={{ uri: item.artwork }} style={styles.artwork} />
+               <Image source={{ uri: item.artwork }} style={styles.artwork} key={item.artwork} />
              ) : (
                <Ionicons name="musical-note" size={24} color="#555" />
              )}
@@ -289,7 +302,7 @@ export default function GroupDetailScreen() {
              )}
           </View>
           <View style={styles.info}>
-            <Text style={[styles.title, isCurrent && [styles.activeText, { color: themeColor }]]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
+            <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
             <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">{item.artist}</Text>
           </View>
         </TouchableOpacity>
@@ -331,7 +344,7 @@ export default function GroupDetailScreen() {
       <TouchableOpacity style={styles.albumItem} onPress={() => handleAlbumPress(item)}>
         <View style={styles.albumIcon}>
           {coverArt ? (
-            <Image source={{ uri: coverArt }} style={styles.artwork} />
+            <Image source={{ uri: coverArt }} style={styles.artwork} key={coverArt} />
           ) : (
             <Ionicons name="disc" size={24} color="#fff" />
           )}
@@ -469,7 +482,7 @@ export default function GroupDetailScreen() {
         >
           <View style={styles.miniArtworkContainer}>
              {currentTrack.artwork ? (
-               <Image source={{ uri: currentTrack.artwork }} style={styles.miniArtwork} />
+               <Image source={{ uri: currentTrack.artwork }} style={styles.miniArtwork} key={currentTrack.artwork} />
              ) : (
                <Ionicons name="musical-note" size={20} color="#aaa" />
              )}
@@ -534,7 +547,6 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
   heroSubtitle: {
-    color: '#1DB954',
     fontSize: 12,
     fontWeight: '900',
     marginTop: 4,

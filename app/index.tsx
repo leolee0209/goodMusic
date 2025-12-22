@@ -36,8 +36,6 @@ export default function HomeScreen() {
   useEffect(() => {
     if (params.q) {
       setSearchQuery(params.q);
-      // When searching globally, maybe keep active tab or switch to a 'search' results view
-      // For now, let's keep the behavior of staying on songs or just allowing the FlatList below to handle it.
     }
     if (params.f === 'true') {
       setShowFavoritesOnly(true);
@@ -128,6 +126,18 @@ export default function HomeScreen() {
     });
   };
 
+  /**
+   * Normalize text for search: remove accents and standardize apostrophes.
+   */
+  const normalizeForSearch = (text: string) => {
+    return text
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Remove accents
+      .replace(/[''""`]/g, "'") // Standardize apostrophes/quotes to straight single quote
+      .trim();
+  };
+
   // Unified Grouping & Search Logic
   const groupedLibrary = useMemo(() => {
     let baseSongs = [...library];
@@ -135,9 +145,9 @@ export default function HomeScreen() {
       baseSongs = baseSongs.filter(track => favorites.includes(track.id));
     }
 
-    const lowerQuery = searchQuery.toLowerCase().trim();
-    const isSearching = lowerQuery !== '';
-    const keywords = isSearching ? lowerQuery.split(/\s+/).filter(k => k.length > 0) : [];
+    const isSearching = searchQuery.trim().length > 0;
+    const normalizedQuery = normalizeForSearch(searchQuery);
+    const keywords = isSearching ? normalizedQuery.split(/\s+/).filter(k => k.length > 0) : [];
 
     const artistsMap: Record<string, Track[]> = {};
     const albumsMap: Record<string, Track[]> = {};
@@ -153,9 +163,9 @@ export default function HomeScreen() {
 
     let songs = isSearching 
       ? baseSongs.filter(track => {
-          const title = track.title.toLowerCase();
-          const artist = track.artist.toLowerCase();
-          const album = (track.album || '').toLowerCase();
+          const title = normalizeForSearch(track.title);
+          const artist = normalizeForSearch(track.artist);
+          const album = normalizeForSearch(track.album || '');
           return keywords.every(k => title.includes(k) || artist.includes(k) || album.includes(k));
         })
       : baseSongs;
@@ -164,8 +174,14 @@ export default function HomeScreen() {
     let albums = Object.entries(albumsMap).map(([name, tracks]) => ({ name, tracks, id: `album-${name}` }));
 
     if (isSearching) {
-      artists = artists.filter(a => keywords.every(k => a.name.toLowerCase().includes(k)));
-      albums = albums.filter(a => keywords.every(k => a.name.toLowerCase().includes(k)));
+      artists = artists.filter(a => {
+          const name = normalizeForSearch(a.name);
+          return keywords.every(k => name.includes(k));
+      });
+      albums = albums.filter(a => {
+          const name = normalizeForSearch(a.name);
+          return keywords.every(k => name.includes(k));
+      });
     }
 
     // Alphabetical Sorting
@@ -430,6 +446,7 @@ const styles = StyleSheet.create({
   artwork: { width: '100%', height: '100%' },
   info: { flex: 1, marginLeft: 15 },
   title: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  activeText: {},
   artist: { color: '#aaa', fontSize: 14, marginTop: 2 },
   sideButtons: { flexDirection: 'row', alignItems: 'center' },
   sideButton: { padding: 10 },
