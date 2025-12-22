@@ -1,13 +1,27 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
+import { useSettings, Tab } from '../contexts/SettingsContext';
+
+const THEME_COLORS = [
+  '#1DB954', // Spotify Green
+  '#FF5733', // Orange
+  '#3357FF', // Blue
+  '#FF33A8', // Pink
+  '#A833FF', // Purple
+  '#FFC300', // Yellow
+  '#00C853', // Android Green
+  '#2962FF', // Deep Blue
+];
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { refreshLibrary, importLocalFolder, pickAndImportFiles, isScanning, scanProgress } = useMusic();
+  const { defaultTab, setDefaultTab, themeColor, setThemeColor } = useSettings();
+  const [showTabPicker, setShowTabPicker] = React.useState(false);
 
   const handleRefresh = async () => {
     await refreshLibrary();
@@ -45,17 +59,54 @@ export default function SettingsScreen() {
               )}
             </View>
             <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
+              <View style={[styles.progressBarFill, { width: `${progressPercent}%`, backgroundColor: themeColor }]} />
             </View>
           </View>
         )}
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Library Management</Text>
+          <Text style={[styles.sectionTitle, { color: themeColor }]}>App Preferences</Text>
+          
+          <TouchableOpacity style={styles.settingItem} onPress={() => setShowTabPicker(true)}>
+            <View style={styles.settingIcon}>
+              <Ionicons name="home-outline" size={22} color={themeColor} />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingText}>Default Tab</Text>
+              <Text style={styles.settingSubtext}>{defaultTab.charAt(0).toUpperCase() + defaultTab.slice(1)}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#666" />
+          </TouchableOpacity>
+
+          <View style={styles.settingItemColumn}>
+            <View style={styles.settingHeaderRow}>
+               <View style={styles.settingIcon}>
+                <Ionicons name="color-palette-outline" size={22} color={themeColor} />
+              </View>
+              <View style={styles.settingInfo}>
+                <Text style={styles.settingText}>Theme Color</Text>
+              </View>
+            </View>
+            <View style={styles.colorGrid}>
+              {THEME_COLORS.map(color => (
+                <TouchableOpacity 
+                  key={color} 
+                  style={[styles.colorOption, { backgroundColor: color }, themeColor === color && styles.selectedColor]}
+                  onPress={() => setThemeColor(color)}
+                >
+                  {themeColor === color && <Ionicons name="checkmark" size={16} color="#fff" />}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: themeColor }]}>Library Management</Text>
           
           <TouchableOpacity style={styles.settingItem} onPress={handleRefresh}>
             <View style={styles.settingIcon}>
-              <Ionicons name="refresh-outline" size={22} color="#1DB954" />
+              <Ionicons name="refresh-outline" size={22} color={themeColor} />
             </View>
             <View style={styles.settingInfo}>
               <Text style={styles.settingText}>Refresh Library</Text>
@@ -65,7 +116,7 @@ export default function SettingsScreen() {
 
           <TouchableOpacity style={styles.settingItem} onPress={handleImportFiles}>
             <View style={styles.settingIcon}>
-              <Ionicons name="document-text-outline" size={22} color="#1DB954" />
+              <Ionicons name="document-text-outline" size={22} color={themeColor} />
             </View>
             <View style={styles.settingInfo}>
               <Text style={styles.settingText}>Import Files</Text>
@@ -75,7 +126,7 @@ export default function SettingsScreen() {
 
           <TouchableOpacity style={styles.settingItem} onPress={handleImportFolder}>
             <View style={styles.settingIcon}>
-              <Ionicons name="folder-open-outline" size={22} color="#1DB954" />
+              <Ionicons name="folder-open-outline" size={22} color={themeColor} />
             </View>
             <View style={styles.settingInfo}>
               <Text style={styles.settingText}>Add Folder</Text>
@@ -85,7 +136,7 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About</Text>
+          <Text style={[styles.sectionTitle, { color: themeColor }]}>About</Text>
           <View style={styles.settingItem}>
             <View style={styles.settingIcon}>
               <Ionicons name="information-circle-outline" size={22} color="#888" />
@@ -97,6 +148,26 @@ export default function SettingsScreen() {
           </View>
         </View>
       </ScrollView>
+
+      <Modal visible={showTabPicker} transparent animationType="fade">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowTabPicker(false)}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Default Tab</Text>
+            {(['songs', 'artists', 'albums', 'playlists'] as Tab[]).map(tab => (
+              <TouchableOpacity 
+                key={tab} 
+                style={styles.modalItem}
+                onPress={() => { setDefaultTab(tab); setShowTabPicker(false); }}
+              >
+                <Text style={[styles.modalItemText, defaultTab === tab && { color: themeColor, fontWeight: 'bold' }]}>
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </Text>
+                {defaultTab === tab && <Ionicons name="checkmark" size={20} color={themeColor} />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -163,7 +234,6 @@ const styles = StyleSheet.create({
     marginTop: 30,
   },
   sectionTitle: {
-    color: '#1DB954',
     fontSize: 14,
     fontWeight: 'bold',
     textTransform: 'uppercase',
@@ -176,6 +246,16 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#1E1E1E',
+  },
+  settingItemColumn: {
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E1E1E',
+  },
+  settingHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
   },
   settingIcon: {
     width: 40,
@@ -199,4 +279,52 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginTop: 2,
   },
+  colorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingLeft: 55, 
+  },
+  colorOption: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectedColor: {
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '80%',
+    backgroundColor: '#1E1E1E',
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  modalItemText: {
+    color: '#ccc',
+    fontSize: 16,
+  }
 });

@@ -3,21 +3,30 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
+import { useSettings, Tab } from '../contexts/SettingsContext';
 import { DUMMY_PLAYLIST } from '../constants/dummyData';
 import { Track, PlaybackOrigin } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
 import { TrackActionSheet } from '../components/TrackActionSheet';
 
-type Tab = 'songs' | 'artists' | 'albums' | 'playlists';
-
 export default function HomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string; f?: string }>();
   const { playTrack, currentTrack, isPlaying, togglePlayPause, favorites, library, playlists, createPlaylist, addToPlaylist, removeTrack } = useMusic();
+  const { defaultTab, themeColor } = useSettings();
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<Tab>('songs');
+  const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  
+  // Update activeTab when defaultTab changes (only on initial load effectively, or if user changes it in settings and comes back)
+  // However, we probably only want to set it on mount if we want to respect user's navigation during session.
+  // For now, let's just initialize it.
+  useEffect(() => {
+    if (!searchQuery && !params.q) {
+        setActiveTab(defaultTab);
+    }
+  }, [defaultTab]);
 
   // Selection Mode State
   const [selectedTracks, setSelectedTracks] = useState<string[]>([]);
@@ -212,7 +221,7 @@ export default function HomeScreen() {
     return (
       <TouchableOpacity style={styles.groupItem} onPress={() => handlePlaylistItemPress(item)}>
         <View style={styles.groupIcon}>
-          <Ionicons name="list" size={24} color="#1DB954" />
+          <Ionicons name="list" size={24} color={themeColor} />
         </View>
         <View style={styles.info}>
           <Text style={styles.groupTitle}>{item.title}</Text>
@@ -228,7 +237,7 @@ export default function HomeScreen() {
     const isSelected = selectedTracks.includes(item.id);
 
     return (
-      <View style={[styles.item, isCurrent && styles.activeItem, isSelected && styles.selectedItem]}>
+      <View style={[styles.item, isCurrent && [styles.activeItem, { borderLeftColor: themeColor }], isSelected && [styles.selectedItem, { borderColor: themeColor, backgroundColor: `${themeColor}1A` }]]}>
         <TouchableOpacity 
           style={styles.itemContent} 
           onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
@@ -242,12 +251,12 @@ export default function HomeScreen() {
              )}
              {isSelected && (
                <View style={styles.selectedOverlay}>
-                 <Ionicons name="checkmark-circle" size={24} color="#1DB954" />
+                 <Ionicons name="checkmark-circle" size={24} color={themeColor} />
                </View>
              )}
           </View>
           <View style={styles.info}>
-            <Text style={[styles.title, isCurrent && styles.activeText]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
+            <Text style={[styles.title, isCurrent && [styles.activeText, { color: themeColor }]]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
             <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">{item.artist}</Text>
           </View>
         </TouchableOpacity>
@@ -257,7 +266,7 @@ export default function HomeScreen() {
             <Ionicons name="ellipsis-vertical" size={20} color="#888" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.sideButton} onPress={() => handleSideButtonPress(item)}>
-            <Ionicons name={isCurrent && isPlaying ? "pause-circle" : "play-circle-outline"} size={30} color={isCurrent ? "#1DB954" : "#888"} />
+            <Ionicons name={isCurrent && isPlaying ? "pause-circle" : "play-circle-outline"} size={30} color={isCurrent ? themeColor : "#888"} />
           </TouchableOpacity>
         </View>
       </View>
@@ -289,7 +298,7 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {isSelectionMode ? (
-        <View style={[styles.topBar, styles.selectionBar]}>
+        <View style={[styles.topBar, styles.selectionBar, { backgroundColor: themeColor }]}>
           <TouchableOpacity onPress={() => setSelectedTracks([])} style={styles.iconButton}>
             <Ionicons name="close" size={30} color="#fff" />
           </TouchableOpacity>
@@ -314,7 +323,7 @@ export default function HomeScreen() {
               <Ionicons name="add-outline" size={28} color="#fff" />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowFavoritesOnly(!showFavoritesOnly)} style={styles.iconButton}>
-              <Ionicons name={showFavoritesOnly ? "heart" : "heart-outline"} size={24} color={showFavoritesOnly ? "#1DB954" : "#fff"} />
+              <Ionicons name={showFavoritesOnly ? "heart" : "heart-outline"} size={24} color={showFavoritesOnly ? themeColor : "#fff"} />
             </TouchableOpacity>
           </View>
         </View>
@@ -325,7 +334,7 @@ export default function HomeScreen() {
           {(['songs', 'artists', 'albums', 'playlists'] as Tab[]).map(tab => (
             <TouchableOpacity 
               key={tab} 
-              style={[styles.tab, activeTab === tab && styles.activeTab]}
+              style={[styles.tab, activeTab === tab && [styles.activeTab, { borderBottomColor: themeColor }]]}
               onPress={() => setActiveTab(tab)}
             >
               <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
@@ -345,7 +354,7 @@ export default function HomeScreen() {
               ...(groupedLibrary.songs.length > 0 ? [{ type: 'header', title: 'Songs' }, ...groupedLibrary.songs.map(s => ({ ...s, type: 'song' }))] : []),
             ]}
             renderItem={({ item }: any) => {
-              if (item.type === 'header') return <Text style={styles.sectionHeader}>{item.title}</Text>;
+              if (item.type === 'header') return <Text style={[styles.sectionHeader, { color: themeColor }]}>{item.title}</Text>;
               if (item.type === 'artist' || item.type === 'album') return renderGroupItem({ item, type: item.type });
               return renderSongItem({ item });
             }}
@@ -402,28 +411,28 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#121212' },
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 },
-  selectionBar: { backgroundColor: '#1DB954', justifyContent: 'space-between' },
+  selectionBar: { justifyContent: 'space-between' },
   selectionTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   mainSearchBar: { flex: 1, marginHorizontal: 10 },
   actionButtons: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   iconButton: { padding: 5, justifyContent: 'center', alignItems: 'center' },
   tabs: { flexDirection: 'row', paddingHorizontal: 16, marginBottom: 10 },
   tab: { marginRight: 20, paddingBottom: 5 },
-  activeTab: { borderBottomWidth: 2, borderBottomColor: '#1DB954' },
+  activeTab: { borderBottomWidth: 2 },
   tabText: { color: '#888', fontSize: 16, fontWeight: '600' },
   activeTabText: { color: '#fff' },
   listContent: { paddingHorizontal: 16, paddingBottom: 100 },
-  sectionHeader: { color: '#1DB954', fontSize: 14, fontWeight: 'bold', textTransform: 'uppercase', marginTop: 20, marginBottom: 10, letterSpacing: 1 },
+  sectionHeader: { fontSize: 14, fontWeight: 'bold', textTransform: 'uppercase', marginTop: 20, marginBottom: 10, letterSpacing: 1 },
   item: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, padding: 8, borderRadius: 12, backgroundColor: '#1E1E1E' },
-  activeItem: { backgroundColor: '#282828', borderLeftWidth: 3, borderLeftColor: '#1DB954' },
-  selectedItem: { backgroundColor: 'rgba(29, 185, 84, 0.1)', borderColor: '#1DB954', borderWidth: 1 },
+  activeItem: { backgroundColor: '#282828', borderLeftWidth: 3 },
+  selectedItem: { borderWidth: 1 },
   itemContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
   artworkPlaceholder: { width: 50, height: 50, borderRadius: 6, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', position: 'relative' },
   selectedOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   artwork: { width: '100%', height: '100%' },
   info: { flex: 1, marginLeft: 15 },
   title: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  activeText: { color: '#1DB954' },
+  activeText: {},
   artist: { color: '#aaa', fontSize: 14, marginTop: 2 },
   sideButtons: { flexDirection: 'row', alignItems: 'center' },
   sideButton: { padding: 10 },

@@ -30,7 +30,7 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
     const albumArtCache = new Map<string, string>();
 
     // Concurrency control: process files in chunks
-    const CHUNK_SIZE = 10;
+    const CHUNK_SIZE = 3;
     for (let i = 0; i < totalFiles; i += CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + CHUNK_SIZE);
       await logToFile(`Processing chunk ${Math.floor(i/CHUNK_SIZE) + 1} (${chunk.length} files)...`);

@@ -304,23 +304,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshLibrary = async () => {
     return new Promise<void>((resolve) => {
       queueTask(async () => {
-        let currentBatch: Track[] = [];
-        const BATCH_SIZE = 25;
         let processedCount = 0;
-
+        
         const syncedTracks = await syncLibrary(
           (track) => {
             processedCount++;
-            setScanProgress(prev => ({ ...prev, current: processedCount }));
-            currentBatch.push(track);
-            if (currentBatch.length >= BATCH_SIZE) {
-              const batchToProcess = [...currentBatch];
-              currentBatch = [];
-              setLibrary(prev => {
-                const prevMap = new Map(prev.map(t => [t.id, t]));
-                batchToProcess.forEach(t => prevMap.set(t.id, t));
-                return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-              });
+            if (processedCount % 10 === 0) {
+                setScanProgress(prev => ({ ...prev, current: processedCount }));
             }
           },
           (total) => {
@@ -356,7 +346,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 const fileUri = files[i];
                 const fileName = decodeURIComponent(fileUri).split('/').pop();
                 if (fileName) await FileSystem.copyAsync({ from: fileUri, to: musicDir + fileName });
-                setScanProgress(prev => ({ ...prev, current: i + 1 }));
+                if (i % 10 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
               }
             }
           } else {
@@ -370,26 +360,16 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 if (!fileName.startsWith('.')) {
                   await FileSystem.copyAsync({ from: uri + (uri.endsWith('/') ? '' : '/') + fileName, to: musicDir + fileName });
                 }
-                setScanProgress(prev => ({ ...prev, current: i + 1 }));
+                if (i % 10 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
               }
             }
           }
           let syncCount = 0;
-          let currentSyncBatch: Track[] = [];
-          const SYNC_BATCH_SIZE = 25;
           const finalTracks = await syncLibrary(
             (track) => {
               syncCount++;
-              setScanProgress(prev => ({ ...prev, current: syncCount }));
-              currentSyncBatch.push(track);
-              if (currentSyncBatch.length >= SYNC_BATCH_SIZE) {
-                const batchToProcess = [...currentSyncBatch];
-                currentSyncBatch = [];
-                setLibrary(prev => {
-                  const prevMap = new Map(prev.map(t => [t.id, t]));
-                  batchToProcess.forEach(t => prevMap.set(t.id, t));
-                  return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-                });
+              if (syncCount % 10 === 0) {
+                setScanProgress(prev => ({ ...prev, current: syncCount }));
               }
             },
             (total) => { setScanProgress({ current: 0, total }); }
@@ -429,24 +409,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             for (let i = 0; i < result.assets.length; i++) {
               const file = result.assets[i];
               await FileSystem.copyAsync({ from: file.uri, to: destDir + file.name });
-              setScanProgress(prev => ({ ...prev, current: i + 1 }));
+              if (i % 10 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
             }
             let syncCount = 0;
-            let currentSyncBatch: Track[] = [];
-            const SYNC_BATCH_SIZE = 25;
             const finalTracks = await syncLibrary(
               (track) => {
                 syncCount++;
-                setScanProgress(prev => ({ ...prev, current: syncCount }));
-                currentSyncBatch.push(track);
-                if (currentSyncBatch.length >= SYNC_BATCH_SIZE) {
-                  const batchToProcess = [...currentSyncBatch];
-                  currentSyncBatch = [];
-                  setLibrary(prev => {
-                    const prevMap = new Map(prev.map(t => [t.id, t]));
-                    batchToProcess.forEach(t => prevMap.set(t.id, t));
-                    return Array.from(prevMap.values()).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-                  });
+                if (syncCount % 10 === 0) {
+                    setScanProgress(prev => ({ ...prev, current: syncCount }));
                 }
               },
               (total) => { setScanProgress({ current: 0, total }); }

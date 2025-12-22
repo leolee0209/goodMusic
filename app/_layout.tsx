@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
 import { MusicProvider } from "../contexts/MusicContext";
+import { SettingsProvider } from "../contexts/SettingsContext";
 import { StatusBar } from "expo-status-bar";
 import { Buffer } from 'buffer';
 
@@ -7,20 +8,22 @@ global.Buffer = global.Buffer || Buffer;
 
 export default function RootLayout() {
   return (
-    <MusicProvider>
-      <StatusBar style="light" />
-      <Stack screenOptions={{
-        headerStyle: { backgroundColor: '#121212' },
-        headerTintColor: '#fff',
-        contentStyle: { backgroundColor: '#121212' },
-        headerShown: false
-      }}>
-        <Stack.Screen name="index" options={{ title: "GoodMusic" }} />
-        <Stack.Screen name="player" options={{ 
-          presentation: 'modal',
-          title: 'Now Playing'
-        }} />
-      </Stack>
-    </MusicProvider>
+    <SettingsProvider>
+      <MusicProvider>
+        <StatusBar style="light" />
+        <Stack screenOptions={{
+          headerStyle: { backgroundColor: '#121212' },
+          headerTintColor: '#fff',
+          contentStyle: { backgroundColor: '#121212' },
+          headerShown: false
+        }}>
+          <Stack.Screen name="index" options={{ title: "GoodMusic" }} />
+          <Stack.Screen name="player" options={{ 
+            presentation: 'modal',
+            title: 'Now Playing'
+          }} />
+        </Stack>
+      </MusicProvider>
+    </SettingsProvider>
   );
 }
