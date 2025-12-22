@@ -14,7 +14,7 @@ import { Track, MusicContextType, RepeatMode, PlaybackOrigin, Playlist } from '.
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { getAllTracks, initDatabase } from '../utils/database';
+import { getAllTracks, initDatabase, addToHistory, getPlaybackHistory } from '../utils/database';
 import { syncLibrary } from '../utils/librarySync';
 import { logToFile } from '../utils/logger';
 
@@ -45,6 +45,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [playbackOrigin, setPlaybackOrigin] = useState<PlaybackOrigin | null>(null);
   
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [history, setHistory] = useState<string[]>([]);
+  const [optimisticTrack, setOptimisticTrack] = useState<Track | null>(null);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
@@ -90,6 +92,157 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setIsScanning(false);
         setScanProgress({ current: 0, total: 0 });
       }
+    });
+  };
+
+  const refreshTrackMetadata = async (trackId: string) => {
+    const track = library.find(t => t.id === trackId);
+    if (!track) return;
+
+    try {
+      await logToFile(`Action: Refreshing metadata for ${track.title} (${trackId})`);
+      const { parseMetadata } = await import('../utils/fileScanner');
+      const { insertTracks } = await import('../utils/database');
+      
+      const fileName = track.uri.split('/').pop() || "";
+      const albumArtCache = new Map<string, string>();
+      const metadata = await parseMetadata(track.uri, fileName, albumArtCache);
+      
+      let lrcContent = undefined;
+      const dirPath = track.uri.substring(0, track.uri.lastIndexOf('/') + 1);
+      const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+      const lrcUri = dirPath + nameWithoutExt + '.lrc';
+      try {
+         const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
+         if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
+      } catch(e) {}
+
+      const updatedTrack: Track = {
+        ...track,
+        title: metadata.title,
+        artist: metadata.artist,
+        album: metadata.album,
+        artwork: resolveArtworkUri(metadata.artwork),
+        lrc: lrcContent,
+        trackNumber: metadata.trackNumber,
+        duration: metadata.duration
+      };
+
+      await insertTracks([updatedTrack]);
+      
+      setLibrary(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
+      setPlaylistState(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
+      setOriginalPlaylist(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
+      
+      await logToFile('Metadata refreshed successfully.');
+    } catch (e) {
+      await logToFile(`Error refreshing metadata: ${e}`, 'ERROR');
+    }
+  };
+
+  const refreshAllMetadata = async () => {
+    queueTask(async () => {
+      await logToFile('Action: Refreshing metadata for ALL tracks...');
+      const { parseMetadata } = await import('../utils/fileScanner');
+      const { insertTracks } = await import('../utils/database');
+      
+      let processed = 0;
+      setScanProgress({ current: 0, total: library.length });
+      setIsScanning(true);
+      
+      const updates: Track[] = [];
+      const albumArtCache = new Map<string, string>();
+
+      for (const track of library) {
+        try {
+          const fileName = track.uri.split('/').pop() || "";
+          const metadata = await parseMetadata(track.uri, fileName, albumArtCache);
+          
+          let lrcContent = undefined;
+          const dirPath = track.uri.substring(0, track.uri.lastIndexOf('/') + 1);
+          const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+          const lrcUri = dirPath + nameWithoutExt + '.lrc';
+          try {
+             const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
+             if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
+          } catch(e) {}
+
+          const updatedTrack: Track = {
+            ...track,
+            title: metadata.title,
+            artist: metadata.artist,
+            album: metadata.album,
+            artwork: resolveArtworkUri(metadata.artwork),
+            lrc: lrcContent,
+            trackNumber: metadata.trackNumber,
+            duration: metadata.duration
+          };
+          
+          updates.push(updatedTrack);
+        } catch (e) {
+           await logToFile(`Failed to refresh metadata for ${track.uri}: ${e}`, 'WARN');
+        }
+        
+        processed++;
+        if (processed % 10 === 0) setScanProgress(prev => ({ ...prev, current: processed }));
+      }
+
+      if (updates.length > 0) {
+          await insertTracks(updates);
+          setLibrary(prev => {
+              const updateMap = new Map(updates.map(u => [u.id, u]));
+              return prev.map(t => updateMap.get(t.id) || t).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+          });
+          await logToFile(`Full metadata refresh complete. Updated ${updates.length} tracks.`);
+      }
+      
+      setIsScanning(false);
+      setScanProgress({ current: 0, total: 0 });
+    });
+  };
+
+  const rescanLyrics = async () => {
+    queueTask(async () => {
+      await logToFile('Action: Rescanning lyrics for all tracks...');
+      const { insertTracks } = await import('../utils/database');
+      let updates: Track[] = [];
+      let processed = 0;
+      setScanProgress({ current: 0, total: library.length });
+      setIsScanning(true);
+
+      for (const track of library) {
+        try {
+          const fileName = track.uri.split('/').pop() || "";
+          const dirPath = track.uri.substring(0, track.uri.lastIndexOf('/') + 1);
+          const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
+          const lrcUri = dirPath + nameWithoutExt + '.lrc';
+          
+          const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
+          if (lrcInfo.exists) {
+             const lrcContent = await FileSystem.readAsStringAsync(lrcUri);
+             if (lrcContent !== track.lrc) {
+                 const updated = { ...track, lrc: lrcContent };
+                 updates.push(updated);
+             }
+          }
+        } catch (e) {}
+        
+        processed++;
+        if (processed % 50 === 0) setScanProgress(prev => ({ ...prev, current: processed }));
+      }
+
+      if (updates.length > 0) {
+          await insertTracks(updates);
+          setLibrary(prev => {
+              const updateMap = new Map(updates.map(u => [u.id, u]));
+              return prev.map(t => updateMap.get(t.id) || t);
+          });
+          await logToFile(`Lyrics rescan complete. Updated ${updates.length} tracks.`);
+      } else {
+          await logToFile('Lyrics rescan complete. No updates found.');
+      }
+      setIsScanning(false);
+      setScanProgress({ current: 0, total: 0 });
     });
   };
 
@@ -180,6 +333,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setPlaylistState(tracksWithResolvedArt);
           setOriginalPlaylist(tracksWithResolvedArt);
           await loadPlaylists();
+          
+          const hist = await getPlaybackHistory();
+          setHistory(hist);
+          
           await logToFile(`App Startup: Successfully loaded ${tracksWithResolvedArt.length} tracks.`);
       } catch (e) {
           await logToFile(`App Startup: loadData failed: ${e}`, 'ERROR');
@@ -216,6 +373,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const playTrack = async (track: Track, newQueue?: Track[], title?: string, origin?: PlaybackOrigin) => {
     try {
       await logToFile(`PlayTrack: Request for "${track.title}" (ID: ${track.id})`);
+      setOptimisticTrack(track);
+
+      // Add to history
+      addToHistory(track.id).then(async () => {
+          const hist = await getPlaybackHistory();
+          setHistory(hist);
+      });
       
       // 1. Ensure Player is ready
       await setupPlayer(); 
@@ -289,6 +453,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // 7. Post-Play Verification
       setTimeout(async () => {
+        setOptimisticTrack(null); // Clear optimistic state
         try {
           const state = await TrackPlayer.getState();
           const queue = await TrackPlayer.getQueue();
@@ -305,6 +470,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }, 500);
 
     } catch (error) {
+      setOptimisticTrack(null);
       await logToFile(`PlayTrack: CRITICAL ERROR: ${error}`, 'ERROR');
     }
   };
@@ -686,7 +852,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
   };
 
-  const mappedCurrentTrack: Track | null = activeTrack ? {
+  const mappedCurrentTrack: Track | null = optimisticTrack || (activeTrack ? {
     id: activeTrack.id || '',
     title: activeTrack.title || 'Unknown Title',
     artist: activeTrack.artist || 'Unknown Artist',
@@ -696,7 +862,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     duration: (activeTrack.duration || 0) * 1000, 
     lrc: (activeTrack as any).original?.lrc, 
     trackNumber: (activeTrack as any).original?.trackNumber
-  } : null;
+  } : null);
 
   return (
     <MusicContext.Provider value={{
@@ -707,6 +873,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isShuffle, 
       repeatMode, 
       favorites, 
+      history,
       showLyrics,
       playTrack, 
       togglePlayPause, 
@@ -718,6 +885,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       toggleFavorite, 
       toggleLyricsView,
       refreshLibrary, 
+      refreshTrackMetadata,
+      refreshAllMetadata,
+      rescanLyrics,
       removeTrack, 
       importLocalFolder, 
       downloadDemoTrack, 

@@ -46,6 +46,11 @@ export const initDatabase = async () => {
       uri TEXT PRIMARY KEY NOT NULL,
       addedAt INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS playback_history (
+      trackId TEXT PRIMARY KEY NOT NULL,
+      playedAt INTEGER NOT NULL
+    );
   `);
 
   // Migration: Add lrc column if it doesn't exist (for existing users)
@@ -253,4 +258,30 @@ export const getFolders = async (): Promise<string[]> => {
   const database = await initDatabase();
   const rows = await database.getAllAsync<any>('SELECT uri FROM added_folders');
   return rows.map(row => row.uri);
+};
+
+export const addToHistory = async (trackId: string) => {
+  const database = await initDatabase();
+  const now = Date.now();
+  await database.runAsync(
+    'INSERT OR REPLACE INTO playback_history (trackId, playedAt) VALUES (?, ?)',
+    [trackId, now]
+  );
+  
+  // Prune history to keep only top 200
+  // We find the 200th timestamp and delete anything older
+  const rows = await database.getAllAsync<any>(
+    'SELECT playedAt FROM playback_history ORDER BY playedAt DESC LIMIT 1 OFFSET 199'
+  );
+  
+  if (rows.length > 0) {
+    const cutoff = rows[0].playedAt;
+    await database.runAsync('DELETE FROM playback_history WHERE playedAt < ?', [cutoff]);
+  }
+};
+
+export const getPlaybackHistory = async (): Promise<string[]> => {
+  const database = await initDatabase();
+  const rows = await database.getAllAsync<any>('SELECT trackId FROM playback_history ORDER BY playedAt DESC');
+  return rows.map(row => row.trackId);
 };

@@ -9,16 +9,23 @@ import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
 import { TrackActionSheet } from '../components/TrackActionSheet';
 import { normalizeForSearch } from '../utils/stringUtils';
+import { formatDuration } from '../utils/timeUtils';
+import { SortBar } from '../components/SortBar';
+import { SortModal } from '../components/SortModal';
 
 export default function GroupDetailScreen() {
   const router = useRouter();
   const { themeColor } = useSettings();
   const { title, type, id, f } = useLocalSearchParams<{ title: string; type: 'artist' | 'album' | 'playlist'; id?: string; f?: string }>();
-  const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites, playlists, addToPlaylist, removeFromPlaylist, removeTrack } = useMusic();
+  const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites, playlists, addToPlaylist, removeFromPlaylist, removeTrack, history } = useMusic();
   const [searchQuery, setSearchQuery] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(f === 'true');
   const [activeTab, setActiveTab] = useState<'songs' | 'albums'>(type === 'artist' ? 'albums' : 'songs');
   const [playlistTracks, setPlaylistTracks] = useState<Track[]>([]);
+
+  // Sort State
+  const [sortOption, setSortOption] = useState('Alphabetical');
+  const [sortModalVisible, setSortModalVisible] = useState(false);
 
   // Selection Mode State
   const [selectedTracks, setSelectedTracks] = useState<string[]>([]);
@@ -32,6 +39,11 @@ export default function GroupDetailScreen() {
   useEffect(() => {
     if (f === 'true') setShowFavoritesOnly(true);
   }, [f]);
+
+  // Reset sort when tab changes
+  useEffect(() => {
+    setSortOption(activeTab === 'songs' && sortOption === 'Track Count' ? 'Alphabetical' : 'Alphabetical');
+  }, [activeTab]);
 
   const loadPlaylistTracks = async () => {
     if (type === 'playlist' && id) {
@@ -188,8 +200,14 @@ export default function GroupDetailScreen() {
           }
       });
 
-      matchName.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-      matchSongs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      // Sort with search
+      if (sortOption === 'Track Count') {
+          matchName.sort((a, b) => b.tracks.length - a.tracks.length);
+          matchSongs.sort((a, b) => b.tracks.length - a.tracks.length);
+      } else {
+          matchName.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+          matchSongs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      }
 
       const results: any[] = [];
       if (matchName.length > 0) {
@@ -204,8 +222,11 @@ export default function GroupDetailScreen() {
       return results;
     }
 
+    if (sortOption === 'Track Count') {
+        return allAlbums.sort((a, b) => b.tracks.length - a.tracks.length);
+    }
     return allAlbums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  }, [activeGroup, searchQuery, showFavoritesOnly, favorites]);
+  }, [activeGroup, searchQuery, showFavoritesOnly, favorites, sortOption]);
 
   const filteredTracks = useMemo(() => {
     if (!activeGroup) return [];
@@ -229,7 +250,16 @@ export default function GroupDetailScreen() {
     }
 
     // Sorting Logic
-    if (type === 'album') {
+    if (activeGroup.type === 'artist' && activeTab === 'songs' && sortOption === 'Recently Played') {
+         filtered.sort((a, b) => {
+           const indexA = history.indexOf(a.id);
+           const indexB = history.indexOf(b.id);
+           if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+           if (indexA !== -1) return -1; 
+           if (indexB !== -1) return 1;  
+           return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+         });
+    } else if (type === 'album') {
       // Sort by track number if viewing a single album
       filtered.sort((a, b) => {
         if (a.trackNumber && b.trackNumber) return a.trackNumber - b.trackNumber;
@@ -238,12 +268,12 @@ export default function GroupDetailScreen() {
         return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
       });
     } else {
-      // Default to alphabetical for Artists, Playlists, and mixed views
+      // Default to alphabetical for other views
       filtered.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
     }
 
     return filtered;
-  }, [activeGroup, searchQuery, showFavoritesOnly, favorites]);
+  }, [activeGroup, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, history]);
 
   if (!activeGroup) {
     return (
@@ -266,7 +296,7 @@ export default function GroupDetailScreen() {
         favoritesOnly: showFavoritesOnly
       };
       await playTrack(track, filteredTracks, activeGroup.title, origin);
-      router.push('/player');
+      // Removed router.push('/player') to prevent auto-opening modal
     }
   };
 
@@ -327,7 +357,9 @@ export default function GroupDetailScreen() {
           </View>
           <View style={styles.info}>
             <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
-            <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">{item.artist}</Text>
+            <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">
+              {item.artist} • {formatDuration(item.duration)}
+            </Text>
           </View>
         </TouchableOpacity>
         
@@ -380,6 +412,12 @@ export default function GroupDetailScreen() {
         <Ionicons name="chevron-forward" size={20} color="#666" />
       </TouchableOpacity>
     );
+  };
+
+  const getSortOptions = () => {
+      if (activeTab === 'songs') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Recently Played', value: 'Recently Played' }];
+      if (activeTab === 'albums') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Track Count', value: 'Track Count' }];
+      return [{ label: 'Alphabetical', value: 'Alphabetical' }];
   };
 
   return (
@@ -447,19 +485,23 @@ export default function GroupDetailScreen() {
       </View>
 
       {activeGroup.type === 'artist' && (
-        <View style={styles.tabs}>
-          <TouchableOpacity 
-            style={[styles.tab, activeTab === 'songs' && [styles.activeTab, { borderBottomColor: themeColor }]]}
-            onPress={() => setActiveTab('songs')}
-          >
-            <Text style={[styles.tabText, activeTab === 'songs' && styles.activeTabText]}>Songs</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.tab, activeTab === 'albums' && [styles.activeTab, { borderBottomColor: themeColor }]]}
-            onPress={() => setActiveTab('albums')}
-          >
-            <Text style={[styles.tabText, activeTab === 'albums' && styles.activeTabText]}>Albums</Text>
-          </TouchableOpacity>
+        <View>
+          <View style={styles.tabs}>
+            <TouchableOpacity 
+              style={[styles.tab, activeTab === 'songs' && [styles.activeTab, { borderBottomColor: themeColor }]]}
+              onPress={() => setActiveTab('songs')}
+            >
+              <Text style={[styles.tabText, activeTab === 'songs' && styles.activeTabText]}>Songs</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.tab, activeTab === 'albums' && [styles.activeTab, { borderBottomColor: themeColor }]]}
+              onPress={() => setActiveTab('albums')}
+            >
+              <Text style={[styles.tabText, activeTab === 'albums' && styles.activeTabText]}>Albums</Text>
+            </TouchableOpacity>
+          </View>
+          {/* Sort Bar for Artist View */}
+          <SortBar currentSort={sortOption} onPress={() => setSortModalVisible(true)} />
         </View>
       )}
 
@@ -534,6 +576,14 @@ export default function GroupDetailScreen() {
         onGoToAlbum={() => activeTrack && activeTrack.album && goToAlbum(activeTrack.album)}
         onRemoveFromPlaylist={type === 'playlist' ? handleActionSheetRemoveFromPlaylist : undefined}
         onRemoveFromLibrary={handleActionSheetRemoveFromLibrary}
+      />
+
+      <SortModal 
+        visible={sortModalVisible}
+        onClose={() => setSortModalVisible(false)}
+        options={getSortOptions()}
+        currentValue={sortOption}
+        onSelect={setSortOption}
       />
     </SafeAreaView>
   );

@@ -33,6 +33,7 @@ export interface MusicContextType {
   isShuffle: boolean;
   repeatMode: RepeatMode;
   favorites: string[];
+  history: string[];
   showLyrics: boolean;
   playTrack: (track: Track, newQueue?: Track[], title?: string, origin?: PlaybackOrigin) => Promise<void>;
   togglePlayPause: () => Promise<void>;
@@ -44,6 +45,9 @@ export interface MusicContextType {
   toggleFavorite: (id: string) => void;
   toggleLyricsView: () => void;
   refreshLibrary: () => Promise<void>;
+  refreshTrackMetadata: (trackId: string) => Promise<void>;
+  refreshAllMetadata: () => Promise<void>;
+  rescanLyrics: () => Promise<void>;
   removeTrack: (trackId: string) => Promise<void>;
   importLocalFolder: () => Promise<void>;
   downloadDemoTrack: () => Promise<void>;

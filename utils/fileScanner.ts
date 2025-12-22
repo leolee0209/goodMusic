@@ -122,6 +122,27 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
           await logToFile(`Failed to save artwork for ${fileName}: ${err}`, 'WARN');
         }
       }
+    } else {
+        // Fallback: Check folder for artwork
+        try {
+            const dirPath = uri.substring(0, uri.lastIndexOf('/') + 1);
+            const folderImages = ['cover.jpg', 'folder.jpg', 'front.jpg', 'artwork.jpg', 'cover.png', 'folder.png', 'front.png', 'artwork.png'];
+            
+            for (const imgName of folderImages) {
+                const imgUri = dirPath + imgName;
+                const info = await FileSystem.getInfoAsync(imgUri);
+                if (info.exists) {
+                    artworkUri = imgUri;
+                    if (album !== 'Unknown Album') {
+                        albumArtCache.set(album, artworkUri);
+                    }
+                    await logToFile(`Found folder artwork for ${fileName}: ${imgName}`);
+                    break;
+                }
+            }
+        } catch (e) {
+            // Ignore folder scan errors
+        }
     }
     
     await logToFile(`Parsed ${fileName}: ${formatLabel} | ${title} - ${artist} | Dur: ${duration}ms | Art: ${!!artworkUri} | Read: ${Math.round(readLength/1024)}KB`);

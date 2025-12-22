@@ -9,21 +9,33 @@ import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
 import { TrackActionSheet } from '../components/TrackActionSheet';
 import { normalizeForSearch } from '../utils/stringUtils';
+import { SortBar } from '../components/SortBar';
+import { SortModal } from '../components/SortModal';
+import { formatDuration } from '../utils/timeUtils';
 
 export default function HomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string; f?: string }>();
-  const { playTrack, currentTrack, isPlaying, togglePlayPause, favorites, library, playlists, createPlaylist, addToPlaylist, removeTrack } = useMusic();
+  const { playTrack, currentTrack, isPlaying, togglePlayPause, favorites, library, playlists, createPlaylist, addToPlaylist, removeTrack, history } = useMusic();
   const { defaultTab, themeColor } = useSettings();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   
+  // Sort State
+  const [sortOption, setSortOption] = useState('Alphabetical');
+  const [sortModalVisible, setSortModalVisible] = useState(false);
+
   useEffect(() => {
     if (!searchQuery && !params.q) {
         setActiveTab(defaultTab);
     }
   }, [defaultTab]);
+
+  // Reset sort when tab changes
+  useEffect(() => {
+    setSortOption(activeTab === 'songs' && sortOption === 'Track Count' ? 'Alphabetical' : 'Alphabetical');
+  }, [activeTab]);
 
   // Selection Mode State
   const [selectedTracks, setSelectedTracks] = useState<string[]>([]);
@@ -173,17 +185,35 @@ export default function HomeScreen() {
       });
     }
 
-    // Alphabetical Sorting
-    songs.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-    artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-    albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-
-    if (isSearching) {
-        console.log(`[Search] Query: "${searchQuery}" -> Songs: ${songs.length}, Artists: ${artists.length}, Albums: ${albums.length}`);
+    // Sorting Logic
+    if (activeTab === 'songs') {
+       if (sortOption === 'Recently Played') {
+         songs.sort((a, b) => {
+           const indexA = history.indexOf(a.id);
+           const indexB = history.indexOf(b.id);
+           // If both in history, lower index (earlier in list) is more recent? 
+           // Wait, history[0] is most recent.
+           if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+           if (indexA !== -1) return -1; // A is in history, B is not
+           if (indexB !== -1) return 1;  // B is in history, A is not
+           return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+         });
+       } else {
+         songs.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+       }
+    } else if (activeTab === 'albums') {
+       if (sortOption === 'Track Count') {
+         albums.sort((a, b) => b.tracks.length - a.tracks.length);
+       } else {
+         albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+       }
+    } else {
+       // Artists
+       artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     }
 
     return { songs, artists, albums };
-  }, [library, searchQuery, showFavoritesOnly, favorites]);
+  }, [library, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, history]);
 
   const handleTrackPress = async (track: Track) => {
     if (currentTrack?.id === track.id) {
@@ -194,7 +224,7 @@ export default function HomeScreen() {
         : (searchQuery ? { type: 'search', title: `Search: ${searchQuery}`, searchQuery, favoritesOnly: showFavoritesOnly } : { type: 'all', title: 'All Songs', favoritesOnly: showFavoritesOnly });
       
       await playTrack(track, groupedLibrary.songs, origin.title, origin);
-      router.push('/player');
+      // Removed router.push('/player') to prevent auto-opening modal
     }
   };
 
@@ -264,7 +294,9 @@ export default function HomeScreen() {
           </View>
           <View style={styles.info}>
             <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
-            <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">{item.artist}</Text>
+            <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">
+              {item.artist} • {formatDuration(item.duration)}
+            </Text>
           </View>
         </TouchableOpacity>
         
@@ -282,6 +314,8 @@ export default function HomeScreen() {
 
   const renderGroupItem = ({ item, type }: { item: { name: string, tracks: Track[] }, type: 'artist' | 'album' }) => {
     const coverArt = item.tracks.find(t => t.artwork)?.artwork;
+    const subtitle = type === 'album' ? (item.tracks[0]?.artist || 'Unknown Artist') : `${item.tracks.length} songs`;
+    
     return (
       <TouchableOpacity style={styles.groupItem} onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}>
         <View style={styles.groupIcon}>
@@ -293,7 +327,7 @@ export default function HomeScreen() {
         </View>
         <View style={styles.info}>
           <Text style={styles.groupTitle} numberOfLines={1} ellipsizeMode="middle">{item.name}</Text>
-          <Text style={styles.groupSubtitle}>{item.tracks.length} songs</Text>
+          <Text style={styles.groupSubtitle}>{subtitle}</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color="#666" />
       </TouchableOpacity>
@@ -301,6 +335,12 @@ export default function HomeScreen() {
   };
 
   const isSearching = searchQuery.trim().length > 0;
+  
+  const getSortOptions = () => {
+      if (activeTab === 'songs') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Recently Played', value: 'Recently Played' }];
+      if (activeTab === 'albums') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Track Count', value: 'Track Count' }];
+      return [{ label: 'Alphabetical', value: 'Alphabetical' }];
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -337,18 +377,24 @@ export default function HomeScreen() {
       )}
 
       {!isSearching && (
-        <View style={styles.tabs}>
-          {(['songs', 'artists', 'albums', 'playlists'] as Tab[]).map(tab => (
-            <TouchableOpacity 
-              key={tab} 
-              style={[styles.tab, activeTab === tab && [styles.activeTab, { borderBottomColor: themeColor }]]}
-              onPress={() => setActiveTab(tab)}
-            >
-              <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <View>
+          <View style={styles.tabs}>
+            {(['songs', 'artists', 'albums', 'playlists'] as Tab[]).map(tab => (
+              <TouchableOpacity 
+                key={tab} 
+                style={[styles.tab, activeTab === tab && [styles.activeTab, { borderBottomColor: themeColor }]]}
+                onPress={() => setActiveTab(tab)}
+              >
+                <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {/* Sort Bar */}
+          {activeTab !== 'playlists' && (
+              <SortBar currentSort={sortOption} onPress={() => setSortModalVisible(true)} />
+          )}
         </View>
       )}
       
@@ -410,6 +456,14 @@ export default function HomeScreen() {
         onGoToArtist={() => activeTrack && goToArtist(activeTrack.artist)}
         onGoToAlbum={() => activeTrack && activeTrack.album && goToAlbum(activeTrack.album)}
         onRemoveFromLibrary={handleActionSheetRemoveFromLibrary}
+      />
+      
+      <SortModal 
+        visible={sortModalVisible}
+        onClose={() => setSortModalVisible(false)}
+        options={getSortOptions()}
+        currentValue={sortOption}
+        onSelect={setSortOption}
       />
     </SafeAreaView>
   );

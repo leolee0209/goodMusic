@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Modal, TouchableOpacity, TouchableWithoutFeedba
 import { Ionicons } from '@expo/vector-icons';
 import { Track, Playlist } from '../types';
 import { useSettings } from '../contexts/SettingsContext';
+import { useMusic } from '../contexts/MusicContext';
 
 interface TrackActionSheetProps {
   visible: boolean;
@@ -28,7 +29,15 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
   onRemoveFromLibrary,
 }) => {
   const { themeColor } = useSettings();
+  const { refreshTrackMetadata } = useMusic();
+  
   if (!track) return null;
+
+  const handleRefreshMetadata = () => {
+      onClose();
+      // Small delay to allow modal to close smoothly
+      setTimeout(() => refreshTrackMetadata(track.id), 300);
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide">
@@ -54,6 +63,11 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
                     <Text style={styles.actionText}>Go to Album</Text>
                   </TouchableOpacity>
                 )}
+                
+                <TouchableOpacity style={styles.actionItem} onPress={handleRefreshMetadata}>
+                  <Ionicons name="refresh-circle-outline" size={24} color="#fff" />
+                  <Text style={styles.actionText}>Refresh Metadata</Text>
+                </TouchableOpacity>
 
                 {playlists.length > 0 && (
                   <View style={styles.playlistSection}>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, FlatList } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, FlatList, Linking, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -19,12 +19,27 @@ const THEME_COLORS = [
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { refreshLibrary, importLocalFolder, pickAndImportFiles, isScanning, scanProgress } = useMusic();
+  const { refreshLibrary, importLocalFolder, pickAndImportFiles, isScanning, scanProgress, rescanLyrics, refreshAllMetadata } = useMusic();
   const { defaultTab, setDefaultTab, themeColor, setThemeColor } = useSettings();
   const [showTabPicker, setShowTabPicker] = React.useState(false);
 
   const handleRefresh = async () => {
     await refreshLibrary();
+  };
+
+  const handleRescanLyrics = async () => {
+    await rescanLyrics();
+  };
+
+  const handleRefreshAllMetadata = async () => {
+    Alert.alert(
+      "Refresh All Metadata",
+      "This will re-scan every file in your library to update tags and artwork. This may take a while.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Start", onPress: () => refreshAllMetadata() }
+      ]
+    );
   };
 
   const handleImportFolder = async () => {
@@ -33,6 +48,10 @@ export default function SettingsScreen() {
 
   const handleImportFiles = async () => {
     await pickAndImportFiles();
+  };
+
+  const openGithub = () => {
+    Linking.openURL('https://github.com/leolee0209/goodMusic');
   };
 
   const progressPercent = scanProgress.total > 0 ? (scanProgress.current / scanProgress.total) * 100 : 0;
@@ -110,7 +129,27 @@ export default function SettingsScreen() {
             </View>
             <View style={styles.settingInfo}>
               <Text style={styles.settingText}>Refresh Library</Text>
-              <Text style={styles.settingSubtext}>Scan for new files and metadata</Text>
+              <Text style={styles.settingSubtext}>Scan for new files</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingItem} onPress={handleRefreshAllMetadata}>
+            <View style={styles.settingIcon}>
+              <Ionicons name="library-outline" size={22} color={themeColor} />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingText}>Refresh All Metadata</Text>
+              <Text style={styles.settingSubtext}>Re-read tags for all tracks</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingItem} onPress={handleRescanLyrics}>
+            <View style={styles.settingIcon}>
+              <Ionicons name="musical-notes-outline" size={22} color={themeColor} />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingText}>Rescan Lyrics</Text>
+              <Text style={styles.settingSubtext}>Update .lrc files from storage</Text>
             </View>
           </TouchableOpacity>
 
@@ -137,15 +176,16 @@ export default function SettingsScreen() {
 
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: themeColor }]}>About</Text>
-          <View style={styles.settingItem}>
+          <TouchableOpacity style={styles.settingItem} onPress={openGithub}>
             <View style={styles.settingIcon}>
-              <Ionicons name="information-circle-outline" size={22} color="#888" />
+              <Ionicons name="logo-github" size={22} color="#fff" />
             </View>
             <View style={styles.settingInfo}>
-              <Text style={styles.settingText}>GoodMusic v1.0.0</Text>
-              <Text style={styles.settingSubtext}>A modern music player for local collections.</Text>
+              <Text style={styles.settingText}>GoodMusic</Text>
+              <Text style={styles.settingSubtext}>View source code on GitHub</Text>
             </View>
-          </View>
+            <Ionicons name="open-outline" size={20} color="#666" />
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
