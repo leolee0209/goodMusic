@@ -25,6 +25,12 @@ const STORAGE_KEY_REPEAT = '@goodmusic_repeat';
 const STORAGE_KEY_FAVORITES = '@goodmusic_favorites';
 const STORAGE_KEY_SHOW_LYRICS = '@goodmusic_show_lyrics';
 
+const resolveArtworkUri = (uri: string | undefined): string | undefined => {
+  if (!uri) return undefined;
+  if (uri.startsWith('http') || uri.startsWith('file://')) return uri;
+  return `file://${uri}`;
+};
+
 export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // RNTP Hooks
   const activeTrack = useActiveTrack();
@@ -113,25 +119,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             await logToFile('Setup: Initializing TrackPlayer native service...');
             
             try {
-                const serviceRunning = await TrackPlayer.isServiceRunning().catch(() => false);
-                if (!serviceRunning) {
-                    await TrackPlayer.setupPlayer({
-                        waitForBuffer: true,
-                        minBuffer: 0.5,
-                        maxBuffer: 3,
-                    });
-                    await logToFile('Setup: TrackPlayer.setupPlayer() successful.');
-                } else {
-                    await logToFile('Setup: TrackPlayer service is already running.');
-                }
+                await TrackPlayer.setupPlayer({
+                    waitForBuffer: true,
+                    minBuffer: 0.5,
+                    maxBuffer: 3,
+                });
+                await logToFile('Setup: TrackPlayer.setupPlayer() successful.');
             } catch (e: any) {
-                // Check for "already initialized" errors which are safe to ignore
-                const errorStr = String(e);
-                if (errorStr.includes('already initialized') || errorStr.includes('already_initialized')) {
-                    await logToFile('Setup: TrackPlayer was already initialized.');
-                } else {
-                    throw e;
-                }
+                await logToFile(`Setup: setupPlayer caught error (likely already initialized): ${e}`);
             }
             
             await TrackPlayer.updateOptions({
