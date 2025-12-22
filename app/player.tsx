@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, Share, Pressable, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMusic } from '../contexts/MusicContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { Track } from '../types';
 import { SyncedLyrics } from '../components/SyncedLyrics';
 import { QueueModal } from '../components/QueueModal';
@@ -24,6 +25,7 @@ const formatTime = (millis: number) => {
 
 export default function PlayerScreen() {
   const router = useRouter();
+  const { themeColor } = useSettings();
   const { 
     currentTrack, 
     isPlaying, 
@@ -72,7 +74,7 @@ export default function PlayerScreen() {
       <SafeAreaView style={styles.container}>
         <Text style={styles.text}>No track playing</Text>
         <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.closeButton}>Go Back</Text>
+          <Text style={[styles.closeButton, { color: themeColor }]}>Go Back</Text>
         </TouchableOpacity>
       </SafeAreaView>
     );
@@ -200,7 +202,7 @@ export default function PlayerScreen() {
   const getRepeatIcon = (): keyof typeof Ionicons.glyphMap => 'repeat';
 
   const getRepeatColor = () => {
-    return repeatMode !== 'none' ? '#1DB954' : '#fff';
+    return repeatMode !== 'none' ? themeColor : '#fff';
   };
 
   return (
@@ -218,7 +220,7 @@ export default function PlayerScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={toggleLyricsView} style={styles.headerIcon}>
-          <Ionicons name="musical-notes" size={24} color={showLyrics ? "#1DB954" : "#fff"} />
+          <Ionicons name="musical-notes" size={24} color={showLyrics ? themeColor : "#fff"} />
         </TouchableOpacity>
       </View>
 
@@ -276,7 +278,7 @@ export default function PlayerScreen() {
               <Ionicons 
                 name={isFavorite ? "heart" : "heart-outline"} 
                 size={28} 
-                color={isFavorite ? "#1DB954" : "#fff"} 
+                color={isFavorite ? themeColor : "#fff"} 
               />
             </TouchableOpacity>
           </View>
@@ -289,7 +291,7 @@ export default function PlayerScreen() {
             minimumValue={0}
             maximumValue={durationMillis || 1}
             value={displayPosition}
-            minimumTrackTintColor="#1DB954"
+            minimumTrackTintColor={themeColor}
             maximumTrackTintColor="#333"
             thumbTintColor="#fff"
             onSlidingStart={handleSlidingStart}
@@ -305,7 +307,7 @@ export default function PlayerScreen() {
         {/* Main Controls */}
         <View style={styles.mainControls}>
           <TouchableOpacity onPress={handleToggleShuffle}>
-            <Ionicons name="shuffle" size={24} color={isShuffle ? "#1DB954" : "#fff"} />
+            <Ionicons name="shuffle" size={24} color={isShuffle ? themeColor : "#fff"} />
           </TouchableOpacity>
           
           <TouchableOpacity onPress={handlePrev}>
@@ -324,7 +326,7 @@ export default function PlayerScreen() {
             <View>
               <Ionicons name={getRepeatIcon()} size={24} color={getRepeatColor()} />
               {repeatMode === 'one' && (
-                <View style={styles.repeatOneBadge}>
+                <View style={[styles.repeatOneBadge, { backgroundColor: themeColor }]}>
                   <Text style={styles.repeatOneText}>1</Text>
                 </View>
               )}

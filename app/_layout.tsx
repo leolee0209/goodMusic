@@ -3,8 +3,11 @@ import { MusicProvider } from "../contexts/MusicContext";
 import { SettingsProvider } from "../contexts/SettingsContext";
 import { StatusBar } from "expo-status-bar";
 import { Buffer } from 'buffer';
+import TrackPlayer from 'react-native-track-player';
 
 global.Buffer = global.Buffer || Buffer;
+
+TrackPlayer.registerPlaybackService(() => require('../service'));
 
 export default function RootLayout() {
   return (

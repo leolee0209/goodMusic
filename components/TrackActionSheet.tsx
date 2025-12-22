@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, Modal, StyleSheet, TouchableOpacity, Pressable, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, TouchableWithoutFeedback } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Track, Playlist } from '../types';
+import { useSettings } from '../contexts/SettingsContext';
 
 interface TrackActionSheetProps {
   visible: boolean;
@@ -24,75 +25,75 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
   onGoToArtist,
   onGoToAlbum,
   onRemoveFromPlaylist,
-  onRemoveFromLibrary
+  onRemoveFromLibrary,
 }) => {
+  const { themeColor } = useSettings();
   if (!track) return null;
 
   return (
-    <Modal
-      animationType="fade"
-      transparent={true}
-      visible={visible}
-      onRequestClose={onClose}
-    >
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View style={styles.content}>
-          <View style={styles.header}>
-            <View style={styles.trackInfo}>
-              <Text style={styles.trackTitle} numberOfLines={1} ellipsizeMode="middle">{track.title}</Text>
-              <Text style={styles.trackArtist} numberOfLines={1} ellipsizeMode="middle">{track.artist}</Text>
+    <Modal visible={visible} transparent animationType="slide">
+      <TouchableWithoutFeedback onPress={onClose}>
+        <View style={styles.overlay}>
+          <TouchableWithoutFeedback>
+            <View style={styles.container}>
+              <View style={styles.header}>
+                <View style={styles.handle} />
+                <Text style={styles.title} numberOfLines={1}>{track.title}</Text>
+                <Text style={styles.subtitle} numberOfLines={1}>{track.artist}</Text>
+              </View>
+
+              <View style={styles.actions}>
+                <TouchableOpacity style={styles.actionItem} onPress={onGoToArtist}>
+                  <Ionicons name="person-outline" size={24} color="#fff" />
+                  <Text style={styles.actionText}>Go to Artist</Text>
+                </TouchableOpacity>
+
+                {track.album && track.album !== 'Unknown Album' && (
+                  <TouchableOpacity style={styles.actionItem} onPress={onGoToAlbum}>
+                    <Ionicons name="disc-outline" size={24} color="#fff" />
+                    <Text style={styles.actionText}>Go to Album</Text>
+                  </TouchableOpacity>
+                )}
+
+                {playlists.length > 0 && (
+                  <View style={styles.playlistSection}>
+                    <Text style={styles.sectionTitle}>Add to Playlist</Text>
+                    {playlists.map(playlist => (
+                      <TouchableOpacity 
+                        key={playlist.id} 
+                        style={styles.playlistItem}
+                        onPress={() => onAddToPlaylist(playlist.id)}
+                      >
+                        <Ionicons name="list-outline" size={22} color={themeColor} />
+                        <Text style={styles.playlistText}>{playlist.title}</Text>
+                        <Ionicons name="add" size={20} color="#666" />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {onRemoveFromPlaylist && (
+                  <TouchableOpacity style={styles.actionItem} onPress={onRemoveFromPlaylist}>
+                    <Ionicons name="remove-circle-outline" size={24} color="#ff4444" />
+                    <Text style={[styles.actionText, { color: '#ff4444' }]}>Remove from Playlist</Text>
+                  </TouchableOpacity>
+                )}
+
+                {onRemoveFromLibrary && (
+                  <TouchableOpacity style={styles.actionItem} onPress={onRemoveFromLibrary}>
+                    <Ionicons name="trash-outline" size={24} color="#ff4444" />
+                    <Text style={[styles.actionText, { color: '#ff4444' }]}>Delete from Library</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              
+              <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
+                <Text style={[styles.cancelText, { color: themeColor }]}>Cancel</Text>
+              </TouchableOpacity>
             </View>
-          </View>
-
-          <ScrollView style={styles.optionsList}>
-            <TouchableOpacity style={styles.option} onPress={onGoToArtist}>
-              <Ionicons name="person-outline" size={22} color="#fff" />
-              <Text style={styles.optionText}>Go to Artist</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.option} onPress={onGoToAlbum}>
-              <Ionicons name="disc-outline" size={22} color="#fff" />
-              <Text style={styles.optionText}>Go to Album</Text>
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-
-            {onRemoveFromPlaylist && (
-              <TouchableOpacity style={styles.option} onPress={onRemoveFromPlaylist}>
-                <Ionicons name="trash-outline" size={22} color="#ff4444" />
-                <Text style={[styles.optionText, { color: '#ff4444' }]}>Remove from Playlist</Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity style={styles.option} onPress={onRemoveFromLibrary}>
-              <Ionicons name="trash-outline" size={22} color="#ff4444" />
-              <Text style={[styles.optionText, { color: '#ff4444' }]}>Remove from Library</Text>
-            </TouchableOpacity>
-
-            <View style={styles.divider} />
-            <Text style={styles.sectionTitle}>Add to Playlist</Text>
-            
-            {playlists.map(playlist => (
-              <TouchableOpacity 
-                key={playlist.id} 
-                style={styles.option} 
-                onPress={() => onAddToPlaylist(playlist.id)}
-              >
-                <Ionicons name="list-outline" size={22} color="#1DB954" />
-                <Text style={styles.optionText}>{playlist.title}</Text>
-              </TouchableOpacity>
-            ))}
-            
-            {playlists.length === 0 && (
-              <Text style={styles.emptyText}>No playlists created yet</Text>
-            )}
-          </ScrollView>
-
-          <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </TouchableOpacity>
+          </TouchableWithoutFeedback>
         </View>
-      </Pressable>
+      </TouchableWithoutFeedback>
     </Modal>
   );
 };
@@ -100,76 +101,92 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
-  content: {
+  container: {
     backgroundColor: '#1E1E1E',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingTop: 20,
+    paddingBottom: 40,
     maxHeight: '80%',
   },
   header: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
+    alignItems: 'center',
+    paddingVertical: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
   },
-  trackInfo: {
-    alignItems: 'center',
+  handle: {
+    width: 40,
+    height: 4,
+    backgroundColor: '#666',
+    borderRadius: 2,
+    marginBottom: 15,
   },
-  trackTitle: {
+  title: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
+    marginBottom: 4,
+    paddingHorizontal: 20,
+    textAlign: 'center',
   },
-  trackArtist: {
-    color: '#aaa',
+  subtitle: {
+    color: '#888',
     fontSize: 14,
-    marginTop: 4,
+    paddingHorizontal: 20,
+    textAlign: 'center',
   },
-  optionsList: {
+  actions: {
     paddingVertical: 10,
   },
-  option: {
+  actionItem: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 15,
     paddingHorizontal: 20,
   },
-  optionText: {
+  actionText: {
     color: '#fff',
     fontSize: 16,
     marginLeft: 15,
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#333',
-    marginVertical: 10,
+  playlistSection: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+    paddingTop: 10,
   },
   sectionTitle: {
-    color: '#1DB954',
+    color: '#888',
     fontSize: 12,
     fontWeight: 'bold',
+    marginLeft: 20,
+    marginBottom: 5,
     textTransform: 'uppercase',
-    paddingHorizontal: 20,
-    marginVertical: 10,
   },
-  emptyText: {
-    color: '#666',
-    textAlign: 'center',
-    paddingVertical: 20,
+  playlistItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  playlistText: {
+    color: '#ccc',
+    fontSize: 15,
+    marginLeft: 15,
+    flex: 1,
   },
   cancelButton: {
-    paddingVertical: 20,
+    marginTop: 10,
+    paddingVertical: 15,
     alignItems: 'center',
     borderTopWidth: 1,
     borderTopColor: '#333',
   },
   cancelText: {
-    color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
 });

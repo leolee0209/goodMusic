@@ -53,7 +53,7 @@
         }
       ],
       "expo-sqlite",
-      "expo-audio"
+      "react-native-track-player"
     ],
     "experiments": {
       "typedRoutes": true,

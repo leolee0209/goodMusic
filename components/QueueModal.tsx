@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Modal, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
 import { Track } from '../types';
 import { Ionicons } from '@expo/vector-icons';
+import { useSettings } from '../contexts/SettingsContext';
 
 interface QueueModalProps {
   visible: boolean;
@@ -18,6 +19,8 @@ export const QueueModal: React.FC<QueueModalProps> = ({
   currentTrack, 
   onTrackSelect 
 }) => {
+  const { themeColor } = useSettings();
+
   return (
     <Modal
       animationType="slide"
@@ -49,7 +52,7 @@ export const QueueModal: React.FC<QueueModalProps> = ({
                 >
                   <Image source={{ uri: item.artwork }} style={styles.artwork} />
                   <View style={styles.info}>
-                    <Text style={[styles.title, isCurrent && styles.activeText]} numberOfLines={1} ellipsizeMode="middle">
+                    <Text style={[styles.title, isCurrent && { color: themeColor, fontWeight: 'bold' }]} numberOfLines={1} ellipsizeMode="middle">
                       {item.title}
                     </Text>
                     <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">
@@ -57,7 +60,7 @@ export const QueueModal: React.FC<QueueModalProps> = ({
                     </Text>
                   </View>
                   {isCurrent && (
-                     <Ionicons name="stats-chart" size={16} color="#1DB954" />
+                     <Ionicons name="stats-chart" size={16} color={themeColor} />
                   )}
                 </TouchableOpacity>
               );
@@ -121,10 +124,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '500',
-  },
-  activeText: {
-    color: '#1DB954',
-    fontWeight: 'bold',
   },
   artist: {
     color: '#aaa',

@@ -83,7 +83,7 @@ export const insertTracks = async (tracks: Track[]) => {
     for (const track of tracks) {
       await database.runAsync(
         `INSERT OR REPLACE INTO tracks (id, title, artist, album, uri, artwork, duration, lrc, trackNumber) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [track.id, track.title, track.artist, track.album || 'Unknown', track.uri, track.artwork || null, 0, track.lrc || null, track.trackNumber || null]
+        [track.id, track.title, track.artist, track.album || 'Unknown', track.uri, track.artwork || null, track.duration || 0, track.lrc || null, track.trackNumber || null]
       );
     }
   });

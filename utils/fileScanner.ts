@@ -81,6 +81,7 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
     const album = metadata.common.album || 'Unknown Album';
     const title = metadata.common.title || fileName.replace(/\.[^/.]+$/, "");
     const trackNumber = metadata.common.track.no || undefined;
+    const duration = metadata.format.duration ? Math.floor(metadata.format.duration * 1000) : undefined;
 
     let artworkUri: string | undefined = undefined;
 
@@ -128,7 +129,8 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
       artist,
       album,
       artwork: artworkUri,
-      trackNumber
+      trackNumber,
+      duration
     };
   } catch (e) {
     await logToFile(`Metadata parse failed for ${fileName}: ${e}`, 'WARN');

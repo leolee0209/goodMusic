@@ -3,6 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { Track, PlaybackOrigin } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
@@ -10,11 +11,12 @@ import { TrackActionSheet } from '../components/TrackActionSheet';
 
 export default function GroupDetailScreen() {
   const router = useRouter();
+  const { themeColor } = useSettings();
   const { title, type, id, f } = useLocalSearchParams<{ title: string; type: 'artist' | 'album' | 'playlist'; id?: string; f?: string }>();
   const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites, playlists, addToPlaylist, removeFromPlaylist, removeTrack } = useMusic();
   const [searchQuery, setSearchQuery] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(f === 'true');
-  const [activeTab, setActiveTab] = useState<'songs' | 'albums'>('songs');
+  const [activeTab, setActiveTab] = useState<'songs' | 'albums'>(type === 'artist' ? 'albums' : 'songs');
   const [playlistTracks, setPlaylistTracks] = useState<Track[]>([]);
 
   // Selection Mode State
@@ -143,17 +145,30 @@ export default function GroupDetailScreen() {
     
     const albumsMap: Record<string, Track[]> = {};
     activeGroup.tracks.forEach(track => {
+      if (showFavoritesOnly && !favorites.includes(track.id)) return;
+      
       const album = track.album || 'Unknown Album';
       if (!albumsMap[album]) albumsMap[album] = [];
       albumsMap[album].push(track);
     });
 
-    return Object.entries(albumsMap).map(([name, tracks]) => ({
+    let albums = Object.entries(albumsMap).map(([name, tracks]) => ({
       name,
       tracks,
       id: `album-${name}`
     }));
-  }, [activeGroup]);
+
+    if (searchQuery.trim() !== '') {
+      const lowerQuery = searchQuery.toLowerCase();
+      const keywords = lowerQuery.split(/\s+/).filter(k => k.length > 0);
+      
+      albums = albums.filter(album => 
+        keywords.every(k => album.name.toLowerCase().includes(k))
+      );
+    }
+
+    return albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+  }, [activeGroup, searchQuery, showFavoritesOnly, favorites]);
 
   const filteredTracks = useMemo(() => {
     if (!activeGroup) return [];
@@ -165,11 +180,15 @@ export default function GroupDetailScreen() {
 
     if (searchQuery.trim() !== '') {
       const lowerQuery = searchQuery.toLowerCase();
-      filtered = filtered.filter(track => 
-        track.title.toLowerCase().includes(lowerQuery) || 
-        track.artist.toLowerCase().includes(lowerQuery) ||
-        (track.album && track.album.toLowerCase().includes(lowerQuery))
-      );
+      const keywords = lowerQuery.split(/\s+/).filter(k => k.length > 0);
+
+      filtered = filtered.filter(track => {
+        const title = track.title.toLowerCase();
+        const artist = track.artist.toLowerCase();
+        const album = (track.album || '').toLowerCase();
+        
+        return keywords.every(k => title.includes(k) || artist.includes(k) || album.includes(k));
+      });
     }
 
     // Sorting Logic
@@ -194,7 +213,7 @@ export default function GroupDetailScreen() {
       <SafeAreaView style={styles.container}>
         <Text style={styles.errorText}>No group selected</Text>
         <TouchableOpacity onPress={handleBack}>
-          <Text style={styles.backButton}>Go Back</Text>
+          <Text style={[styles.backButton, { color: themeColor }]}>Go Back</Text>
         </TouchableOpacity>
       </SafeAreaView>
     );
@@ -251,7 +270,7 @@ export default function GroupDetailScreen() {
     const isSelected = selectedTracks.includes(item.id);
 
     return (
-      <View style={[styles.item, isCurrent && styles.activeItem, isSelected && styles.selectedItem]}>
+      <View style={[styles.item, isCurrent && [styles.activeItem, { borderLeftColor: themeColor }], isSelected && [styles.selectedItem, { borderColor: themeColor, backgroundColor: `${themeColor}1A` }]]}>
         <TouchableOpacity 
           style={styles.itemContent} 
           onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
@@ -265,12 +284,12 @@ export default function GroupDetailScreen() {
              )}
              {isSelected && (
                <View style={styles.selectedOverlay}>
-                 <Ionicons name="checkmark-circle" size={24} color="#1DB954" />
+                 <Ionicons name="checkmark-circle" size={24} color={themeColor} />
                </View>
              )}
           </View>
           <View style={styles.info}>
-            <Text style={[styles.title, isCurrent && styles.activeText]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
+            <Text style={[styles.title, isCurrent && [styles.activeText, { color: themeColor }]]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
             <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">{item.artist}</Text>
           </View>
         </TouchableOpacity>
@@ -291,7 +310,7 @@ export default function GroupDetailScreen() {
               <Ionicons 
                 name={isPlaying ? "pause-circle" : "play-circle"} 
                 size={30} 
-                color="#1DB954" 
+                color={themeColor} 
               />
             ) : (
               <Ionicons 
@@ -345,7 +364,7 @@ export default function GroupDetailScreen() {
         
         {/* Floating Top Controls / Selection Bar */}
         {isSelectionMode ? (
-          <View style={[styles.header, styles.selectionBar]}>
+          <View style={[styles.header, styles.selectionBar, { backgroundColor: themeColor }]}>
             <TouchableOpacity onPress={() => setSelectedTracks([])} style={styles.iconButton}>
               <Ionicons name="close" size={30} color="#fff" />
             </TouchableOpacity>
@@ -375,7 +394,7 @@ export default function GroupDetailScreen() {
               <Ionicons 
                 name={showFavoritesOnly ? "heart" : "heart-outline"} 
                 size={24} 
-                color={showFavoritesOnly ? "#1DB954" : "#fff"} 
+                color={showFavoritesOnly ? themeColor : "#fff"} 
               />
             </TouchableOpacity>
           </View>
@@ -384,7 +403,7 @@ export default function GroupDetailScreen() {
         {/* Hero Title Info */}
         <View style={styles.heroTextContent}>
           <Text style={styles.heroTitle} numberOfLines={2}>{activeGroup.title}</Text>
-          <Text style={styles.heroSubtitle}>
+          <Text style={[styles.heroSubtitle, { color: themeColor }]}>
             {activeGroup.type?.toUpperCase()} • {activeGroup.tracks.length} SONGS
           </Text>
         </View>
@@ -393,13 +412,13 @@ export default function GroupDetailScreen() {
       {activeGroup.type === 'artist' && (
         <View style={styles.tabs}>
           <TouchableOpacity 
-            style={[styles.tab, activeTab === 'songs' && styles.activeTab]}
+            style={[styles.tab, activeTab === 'songs' && [styles.activeTab, { borderBottomColor: themeColor }]]}
             onPress={() => setActiveTab('songs')}
           >
             <Text style={[styles.tabText, activeTab === 'songs' && styles.activeTabText]}>Songs</Text>
           </TouchableOpacity>
           <TouchableOpacity 
-            style={[styles.tab, activeTab === 'albums' && styles.activeTab]}
+            style={[styles.tab, activeTab === 'albums' && [styles.activeTab, { borderBottomColor: themeColor }]]}
             onPress={() => setActiveTab('albums')}
           >
             <Text style={[styles.tabText, activeTab === 'albums' && styles.activeTabText]}>Albums</Text>
@@ -418,8 +437,8 @@ export default function GroupDetailScreen() {
               <Text style={styles.emptyText}>No matches in this group</Text>
               {searchQuery.length > 0 && (
                 <TouchableOpacity style={styles.globalSearchButton} onPress={handleSearchGlobally}>
-                  <Ionicons name="globe-outline" size={20} color="#1DB954" />
-                  <Text style={styles.globalSearchText}>Search Globally for "{searchQuery}"</Text>
+                  <Ionicons name="globe-outline" size={20} color={themeColor} />
+                  <Text style={[styles.globalSearchText, { color: themeColor }]}>Search Globally for "{searchQuery}"</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -427,8 +446,8 @@ export default function GroupDetailScreen() {
           ListFooterComponent={
             searchQuery.length > 0 && filteredTracks.length > 0 ? (
               <TouchableOpacity style={styles.globalSearchFooter} onPress={handleSearchGlobally}>
-                <Text style={styles.globalSearchFooterText}>Search for "{searchQuery}" in entire library</Text>
-                <Ionicons name="arrow-forward" size={16} color="#1DB954" />
+                <Text style={[styles.globalSearchFooterText, { color: themeColor }]}>Search for "{searchQuery}" in entire library</Text>
+                <Ionicons name="arrow-forward" size={16} color={themeColor} />
               </TouchableOpacity>
             ) : null
           }
@@ -543,7 +562,6 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   selectionBar: {
-    backgroundColor: '#1DB954',
     justifyContent: 'space-between',
   },
   selectionTitle: {
@@ -570,7 +588,6 @@ const styles = StyleSheet.create({
   },
   activeTab: {
     borderBottomWidth: 2,
-    borderBottomColor: '#1DB954',
   },
   tabText: {
     color: '#888',
@@ -596,11 +613,8 @@ const styles = StyleSheet.create({
   activeItem: {
     backgroundColor: '#282828',
     borderLeftWidth: 3,
-    borderLeftColor: '#1DB954',
   },
   selectedItem: {
-    backgroundColor: 'rgba(29, 185, 84, 0.1)',
-    borderColor: '#1DB954',
     borderWidth: 1,
   },
   itemContent: {
@@ -637,9 +651,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  activeText: {
-    color: '#1DB954',
-  },
+  activeText: {},
   artist: {
     color: '#aaa',
     fontSize: 14,
@@ -685,7 +697,6 @@ const styles = StyleSheet.create({
     marginTop: 50,
   },
   backButton: {
-    color: '#1DB954',
     fontSize: 16,
     textAlign: 'center',
     marginTop: 20,
@@ -710,7 +721,6 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   globalSearchText: {
-    color: '#1DB954',
     marginLeft: 10,
     fontWeight: '600',
   },
@@ -724,7 +734,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   globalSearchFooterText: {
-    color: '#1DB954',
     marginRight: 8,
     fontSize: 14,
   },

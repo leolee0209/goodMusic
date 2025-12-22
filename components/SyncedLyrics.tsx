@@ -13,12 +13,15 @@ interface SyncedLyricsProps {
 interface LyricLine {
   time: number;
   text: string;
+  isSynced: boolean;
 }
 
 const parseLrc = (lrc: string): LyricLine[] => {
   const lines = lrc.split('\n');
   const result: LyricLine[] = [];
-  const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
+  const timeRegex = /\{(\d{2}):(\d{2})\.(\d{2,3})\}/;
+
+  let hasAnySynced = false;
 
   lines.forEach(line => {
     const match = line.match(timeRegex);
@@ -29,16 +32,28 @@ const parseLrc = (lrc: string): LyricLine[] => {
       const time = minutes * 60 * 1000 + seconds * 1000 + milliseconds;
       const text = line.replace(timeRegex, '').trim();
       if (text) {
-        result.push({ time, text });
+        result.push({ time, text, isSynced: true });
+        hasAnySynced = true;
       }
+    } else if (line.trim()) {
+      // Unsynced line
+      result.push({ time: -1, text: line.trim(), isSynced: false });
     }
   });
 
-  return result.sort((a, b) => a.time - b.time);
+  if (!hasAnySynced) {
+      // If none are synced, we just return them as they are
+      return result;
+  }
+
+  // If some are synced, sort and filter out non-synced ones for the auto-scroll logic
+  return result.filter(l => l.isSynced).sort((a, b) => a.time - b.time);
 };
 
 export const SyncedLyrics: React.FC<SyncedLyricsProps> = ({ lrc, positionMillis, onLinePress, onToggle }) => {
   const lyrics = useMemo(() => parseLrc(lrc), [lrc]);
+  const isSynced = useMemo(() => lyrics.some(l => l.isSynced), [lyrics]);
+  
   const flatListRef = useRef<FlatList>(null);
   const isUserScrolling = useRef(false);
   const scrollY = useRef(0);
@@ -47,10 +62,13 @@ export const SyncedLyrics: React.FC<SyncedLyricsProps> = ({ lrc, positionMillis,
   
   const verticalPadding = containerHeight > 0 ? (containerHeight - LINE_HEIGHT) / 2 : 0;
   
-  const currentIndex = lyrics.findIndex((line, index) => {
-    const nextLine = lyrics[index + 1];
-    return positionMillis >= line.time && (!nextLine || positionMillis < nextLine.time);
-  });
+  const currentIndex = useMemo(() => {
+    if (!isSynced) return -1;
+    return lyrics.findIndex((line, index) => {
+        const nextLine = lyrics[index + 1];
+        return positionMillis >= line.time && (!nextLine || positionMillis < nextLine.time);
+    });
+  }, [lyrics, positionMillis, isSynced]);
 
   const scrollToCurrentIndex = useCallback(() => {
     if (currentIndex >= 0 && flatListRef.current && containerHeight > 0) {
@@ -63,14 +81,14 @@ export const SyncedLyrics: React.FC<SyncedLyricsProps> = ({ lrc, positionMillis,
   }, [currentIndex, containerHeight]);
 
   useEffect(() => {
+    if (!isSynced) return;
+
     // 1. Initial Scroll Logic
-    // We wait until we have a container height and haven't scrolled yet.
     if (!hasScrolledInitial && containerHeight > 0 && currentIndex >= 0) {
-      // Use a small timeout to ensure FlatList is ready to accept scroll
       setTimeout(() => {
         flatListRef.current?.scrollToIndex({
           index: currentIndex,
-          animated: false, // Instant jump for first render
+          animated: false,
           viewPosition: 0.5,
         });
         setHasScrolledInitial(true);
@@ -88,7 +106,7 @@ export const SyncedLyrics: React.FC<SyncedLyricsProps> = ({ lrc, positionMillis,
     if (isVisible) {
       scrollToCurrentIndex();
     }
-  }, [currentIndex, scrollToCurrentIndex, containerHeight, verticalPadding, hasScrolledInitial]);
+  }, [currentIndex, scrollToCurrentIndex, containerHeight, verticalPadding, hasScrolledInitial, isSynced]);
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { height } = event.nativeEvent.layout;
@@ -120,21 +138,28 @@ export const SyncedLyrics: React.FC<SyncedLyricsProps> = ({ lrc, positionMillis,
   };
 
   const renderItem = ({ item, index }: { item: LyricLine; index: number }) => {
-    const isActive = index === currentIndex;
+    const isActive = isSynced && index === currentIndex;
     return (
       <Pressable 
         style={styles.lineWrapper}
         onPress={onToggle}
       >
         <TouchableOpacity 
-          onPress={() => onLinePress && onLinePress(item.time)}
+          onPress={() => {
+              if (item.isSynced && onLinePress) {
+                  onLinePress(item.time);
+              } else {
+                  onToggle?.();
+              }
+          }}
           activeOpacity={0.7}
           hitSlop={{ top: 10, bottom: 10, left: 20, right: 20 }}
         >
           <Text
             style={[ 
               styles.line,
-              isActive ? styles.activeLine : styles.inactiveLine
+              isActive ? styles.activeLine : styles.inactiveLine,
+              !isSynced && styles.unsyncedLine
             ]}
           >
             {item.text}
@@ -153,13 +178,13 @@ export const SyncedLyrics: React.FC<SyncedLyricsProps> = ({ lrc, positionMillis,
           renderItem={renderItem}
           keyExtractor={(_, index) => index.toString()}
           showsVerticalScrollIndicator={false}
-          ListHeaderComponent={<View style={{ height: verticalPadding }} />}
-          ListFooterComponent={<View style={{ height: verticalPadding }} />}
-          getItemLayout={(data, index) => ({
+          ListHeaderComponent={<View style={{ height: isSynced ? verticalPadding : 40 }} />}
+          ListFooterComponent={<View style={{ height: isSynced ? verticalPadding : 40 }} />}
+          getItemLayout={isSynced ? (data, index) => ({
             length: LINE_HEIGHT,
             offset: verticalPadding + LINE_HEIGHT * index,
             index,
-          })}
+          }) : undefined}
           onScroll={handleScroll}
           scrollEventThrottle={16}
           onScrollBeginDrag={handleScrollBeginDrag}
@@ -179,16 +204,22 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   lineWrapper: {
-    height: LINE_HEIGHT,
+    minHeight: LINE_HEIGHT,
     justifyContent: 'center',
     alignItems: 'center',
     width: '100%',
+    paddingVertical: 10,
   },
   line: {
     fontSize: 20,
     fontWeight: 'bold',
     textAlign: 'center',
     paddingHorizontal: 20,
+  },
+  unsyncedLine: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '500',
   },
   activeLine: {
     color: '#fff',

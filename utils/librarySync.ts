@@ -80,7 +80,8 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
             uri: fullUri,
             artwork: metadata.artwork,
             lrc: lrcContent,
-            trackNumber: metadata.trackNumber
+            trackNumber: metadata.trackNumber,
+            duration: metadata.duration
           };
 
           finalTracks.push(newTrack);

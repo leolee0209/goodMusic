@@ -6,6 +6,7 @@ export interface Track {
   uri: string;
   artwork?: string;
   trackNumber?: number;
+  duration?: number;
   lrc?: string; // Content of the LRC file
 }
 

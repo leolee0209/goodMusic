@@ -4,7 +4,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
 import { useSettings, Tab } from '../contexts/SettingsContext';
-import { DUMMY_PLAYLIST } from '../constants/dummyData';
 import { Track, PlaybackOrigin } from '../types';
 import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
@@ -19,9 +18,6 @@ export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   
-  // Update activeTab when defaultTab changes (only on initial load effectively, or if user changes it in settings and comes back)
-  // However, we probably only want to set it on mount if we want to respect user's navigation during session.
-  // For now, let's just initialize it.
   useEffect(() => {
     if (!searchQuery && !params.q) {
         setActiveTab(defaultTab);
@@ -40,7 +36,8 @@ export default function HomeScreen() {
   useEffect(() => {
     if (params.q) {
       setSearchQuery(params.q);
-      setActiveTab('songs');
+      // When searching globally, maybe keep active tab or switch to a 'search' results view
+      // For now, let's keep the behavior of staying on songs or just allowing the FlatList below to handle it.
     }
     if (params.f === 'true') {
       setShowFavoritesOnly(true);
@@ -140,12 +137,12 @@ export default function HomeScreen() {
 
     const lowerQuery = searchQuery.toLowerCase().trim();
     const isSearching = lowerQuery !== '';
-    const mappingSource = isSearching ? baseSongs : library;
+    const keywords = isSearching ? lowerQuery.split(/\s+/).filter(k => k.length > 0) : [];
 
     const artistsMap: Record<string, Track[]> = {};
     const albumsMap: Record<string, Track[]> = {};
 
-    mappingSource.forEach(track => {
+    baseSongs.forEach(track => {
       const artist = track.artist || 'Unknown Artist';
       const album = track.album || 'Unknown Album';
       if (!artistsMap[artist]) artistsMap[artist] = [];
@@ -155,22 +152,23 @@ export default function HomeScreen() {
     });
 
     let songs = isSearching 
-      ? baseSongs.filter(track => 
-          track.title.toLowerCase().includes(lowerQuery) || 
-          track.artist.toLowerCase().includes(lowerQuery) ||
-          (track.album && track.album.toLowerCase().includes(lowerQuery))
-        )
+      ? baseSongs.filter(track => {
+          const title = track.title.toLowerCase();
+          const artist = track.artist.toLowerCase();
+          const album = (track.album || '').toLowerCase();
+          return keywords.every(k => title.includes(k) || artist.includes(k) || album.includes(k));
+        })
       : baseSongs;
 
     let artists = Object.entries(artistsMap).map(([name, tracks]) => ({ name, tracks, id: `artist-${name}` }));
     let albums = Object.entries(albumsMap).map(([name, tracks]) => ({ name, tracks, id: `album-${name}` }));
 
     if (isSearching) {
-      artists = artists.filter(a => a.name.toLowerCase().includes(lowerQuery));
-      albums = albums.filter(a => a.name.toLowerCase().includes(lowerQuery));
+      artists = artists.filter(a => keywords.every(k => a.name.toLowerCase().includes(k)));
+      albums = albums.filter(a => keywords.every(k => a.name.toLowerCase().includes(k)));
     }
 
-    // Alphabetical Sorting (supports Chinese, Japanese, etc.)
+    // Alphabetical Sorting
     songs.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
     artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
@@ -245,7 +243,7 @@ export default function HomeScreen() {
         >
           <View style={styles.artworkPlaceholder}>
              {item.artwork ? (
-               <Image source={{ uri: item.artwork }} style={styles.artwork} />
+               <Image source={{ uri: item.artwork }} style={styles.artwork} key={item.artwork} />
              ) : (
                <Ionicons name="musical-note" size={24} color="#555" />
              )}
@@ -256,7 +254,7 @@ export default function HomeScreen() {
              )}
           </View>
           <View style={styles.info}>
-            <Text style={[styles.title, isCurrent && [styles.activeText, { color: themeColor }]]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
+            <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
             <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">{item.artist}</Text>
           </View>
         </TouchableOpacity>
@@ -279,7 +277,7 @@ export default function HomeScreen() {
       <TouchableOpacity style={styles.groupItem} onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}>
         <View style={styles.groupIcon}>
           {coverArt ? (
-            <Image source={{ uri: coverArt }} style={styles.artwork} />
+            <Image source={{ uri: coverArt }} style={styles.artwork} key={coverArt} />
           ) : (
             <Ionicons name={type === 'artist' ? 'person' : 'disc'} size={24} color="#fff" />
           )}
@@ -382,7 +380,7 @@ export default function HomeScreen() {
       {currentTrack && (
         <TouchableOpacity style={styles.miniPlayer} onPress={() => router.push('/player')} activeOpacity={0.9}>
           <View style={styles.miniArtworkContainer}>
-             {currentTrack.artwork ? <Image source={{ uri: currentTrack.artwork }} style={styles.miniArtwork} /> : <Ionicons name="musical-note" size={20} color="#aaa" />}
+             {currentTrack.artwork ? <Image source={{ uri: currentTrack.artwork }} style={styles.miniArtwork} key={currentTrack.artwork} /> : <Ionicons name="musical-note" size={20} color="#aaa" />}
           </View>
           <View style={styles.miniInfo}>
             <Text style={styles.miniTitle} numberOfLines={1}>{currentTrack.title}</Text>
@@ -432,7 +430,6 @@ const styles = StyleSheet.create({
   artwork: { width: '100%', height: '100%' },
   info: { flex: 1, marginLeft: 15 },
   title: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  activeText: {},
   artist: { color: '#aaa', fontSize: 14, marginTop: 2 },
   sideButtons: { flexDirection: 'row', alignItems: 'center' },
   sideButton: { padding: 10 },
