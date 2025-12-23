@@ -1,7 +1,7 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import { Paths } from 'expo-file-system';
 
-const DOC_DIR = FileSystem.documentDirectory || '';
-const CACHE_DIR = FileSystem.cacheDirectory || '';
+const DOC_DIR = Paths.document.uri + (Paths.document.uri.endsWith('/') ? '' : '/');
+const CACHE_DIR = Paths.cache.uri + (Paths.cache.uri.endsWith('/') ? '' : '/');
 
 /**
  * Converts an absolute URI to a relative path if it's inside the document or cache directory.

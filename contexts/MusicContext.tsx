@@ -12,6 +12,7 @@ import TrackPlayer, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Track, MusicContextType, RepeatMode, PlaybackOrigin, Playlist } from '../types';
 import * as FileSystem from 'expo-file-system/legacy';
+import { Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { getAllTracks, initDatabase, addToHistory, getPlaybackHistory, removeDuplicates } from '../utils/database';
@@ -25,6 +26,8 @@ const STORAGE_KEY_SHUFFLE = '@goodmusic_shuffle';
 const STORAGE_KEY_REPEAT = '@goodmusic_repeat';
 const STORAGE_KEY_FAVORITES = '@goodmusic_favorites';
 const STORAGE_KEY_SHOW_LYRICS = '@goodmusic_show_lyrics';
+
+const MUSIC_DIR = Paths.document.uri + (Paths.document.uri.endsWith('/') ? '' : '/') + 'music/';
 
 export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // RNTP Hooks
@@ -792,8 +795,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       queueTask(async () => {
         try {
           await logToFile('Action: Starting folder import from device...');
-          const musicDir = FileSystem.documentDirectory + 'music/';
-          await FileSystem.makeDirectoryAsync(musicDir, { intermediates: true });
+          await FileSystem.makeDirectoryAsync(MUSIC_DIR, { intermediates: true });
           
           const newFileUris: string[] = [];
 
@@ -808,7 +810,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 const fileUri = files[i];
                 const fileName = decodeURIComponent(fileUri).split('/').pop();
                 if (fileName) {
-                    const destUri = musicDir + fileName;
+                    const destUri = MUSIC_DIR + fileName;
                     await FileSystem.copyAsync({ from: fileUri, to: destUri });
                     newFileUris.push(destUri);
                 }
@@ -825,7 +827,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               for (let i = 0; i < files.length; i++) {
                 const fileName = files[i];
                 if (!fileName.startsWith('.')) {
-                  const destUri = musicDir + fileName;
+                  const destUri = MUSIC_DIR + fileName;
                   await FileSystem.copyAsync({ from: uri + (uri.endsWith('/') ? '' : '/') + fileName, to: destUri });
                   newFileUris.push(destUri);
                 }
@@ -847,8 +849,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const downloadDemoTrack = async () => {
     try {
       await logToFile('Action: Downloading demo track...');
-      const uri = FileSystem.documentDirectory + 'music/demosong.mp3';
-      const lrcUri = FileSystem.documentDirectory + 'music/demosong.lrc';
+      const uri = MUSIC_DIR + 'demosong.mp3';
+      const lrcUri = MUSIC_DIR + 'demosong.lrc';
       await FileSystem.downloadAsync('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', uri);
       const lrcContent = `[00:00.00] Demo Local Track\n[00:05.00] This file is now on your device\n[00:10.00] Testing the offline capability\n[00:15.00] It works!`;
       await FileSystem.writeAsStringAsync(lrcUri, lrcContent);
@@ -864,16 +866,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*', 'application/octet-stream'], multiple: true, copyToCacheDirectory: true });
           
           if (!result.canceled) {
-            const destDir = FileSystem.documentDirectory + 'music/';
-            const dirInfo = await FileSystem.getInfoAsync(destDir);
-            if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(destDir, { intermediates: true });
+            const dirInfo = await FileSystem.getInfoAsync(MUSIC_DIR);
+            if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(MUSIC_DIR, { intermediates: true });
             
             const newFileUris: string[] = [];
             setScanProgress({ current: 0, total: result.assets.length });
             
             for (let i = 0; i < result.assets.length; i++) {
               const file = result.assets[i];
-              const destUri = destDir + file.name;
+              const destUri = MUSIC_DIR + file.name;
               await FileSystem.copyAsync({ from: file.uri, to: destUri });
               newFileUris.push(destUri);
               if (i % 10 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));

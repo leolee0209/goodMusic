@@ -1,4 +1,5 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import * as LegacyLegacyFileSystem from 'expo-file-system/legacy';
+import { Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 import { Track } from '../types';
 import * as mm from 'music-metadata-browser';
@@ -6,6 +7,7 @@ import { Buffer } from 'buffer';
 import { getTrackById } from './database';
 import { logToFile } from './logger';
 
+const CACHE_DIR = Paths.cache.uri + (Paths.cache.uri.endsWith('/') ? '' : '/');
 const AUDIO_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg'];
 
 // Helper to extract metadata using music-metadata
@@ -18,8 +20,8 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
     
     // Step 1: Peek header to determine exact metadata size
     try {
-      const headerContent = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
+      const headerContent = await LegacyFileSystem.readAsStringAsync(uri, {
+        encoding: LegacyFileSystem.EncodingType.Base64,
         length: 16,
         position: 0
       });
@@ -36,8 +38,8 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
         formatLabel = 'MPEG-4';
         const ftypSize = headerBuffer.readUInt32BE(0);
         // Peek further to see if 'moov' follows 'ftyp' (common in optimized files)
-        const nextHeader = await FileSystem.readAsStringAsync(uri, {
-            encoding: FileSystem.EncodingType.Base64,
+        const nextHeader = await LegacyFileSystem.readAsStringAsync(uri, {
+            encoding: LegacyFileSystem.EncodingType.Base64,
             length: 8,
             position: ftypSize
         });
@@ -60,8 +62,8 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
     }
 
     // Step 2: Read the determined length
-    const fileContent = await FileSystem.readAsStringAsync(uri, {
-      encoding: FileSystem.EncodingType.Base64,
+    const fileContent = await LegacyFileSystem.readAsStringAsync(uri, {
+      encoding: LegacyFileSystem.EncodingType.Base64,
       length: readLength,
       position: 0
     });
@@ -98,19 +100,19 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
       const pic = metadata.common.picture[0];
       if (pic.data) {
         try {
-          const cacheDir = FileSystem.cacheDirectory + 'artworks/';
-          const dirInfo = await FileSystem.getInfoAsync(cacheDir);
+          const artworkCacheDir = CACHE_DIR + 'artworks/';
+          const dirInfo = await LegacyFileSystem.getInfoAsync(artworkCacheDir);
           if (!dirInfo.exists) {
-            await FileSystem.makeDirectoryAsync(cacheDir, { intermediates: true });
+            await LegacyFileSystem.makeDirectoryAsync(artworkCacheDir, { intermediates: true });
           }
 
           const safeName = (album + '_' + artist).replace(/[^a-z0-9]/gi, '_').substring(0, 50);
           const artFileName = `art_${safeName}.jpg`; 
-          const artUri = cacheDir + artFileName;
+          const artUri = artworkCacheDir + artFileName;
 
           const base64Art = pic.data.toString('base64');
-          await FileSystem.writeAsStringAsync(artUri, base64Art, {
-            encoding: FileSystem.EncodingType.Base64
+          await LegacyFileSystem.writeAsStringAsync(artUri, base64Art, {
+            encoding: LegacyFileSystem.EncodingType.Base64
           });
 
           artworkUri = artUri;
@@ -130,7 +132,7 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
             
             for (const imgName of folderImages) {
                 const imgUri = dirPath + imgName;
-                const info = await FileSystem.getInfoAsync(imgUri);
+                const info = await LegacyFileSystem.getInfoAsync(imgUri);
                 if (info.exists) {
                     artworkUri = imgUri;
                     if (album !== 'Unknown Album') {
@@ -170,16 +172,16 @@ export const discoverAudioFiles = async (folderUri: string): Promise<string[]> =
 
   const walk = async (uri: string) => {
     try {
-      const info = await FileSystem.getInfoAsync(uri);
+      const info = await LegacyFileSystem.getInfoAsync(uri);
       if (!info.exists || !info.isDirectory) return;
 
-      const files = await FileSystem.readDirectoryAsync(uri);
+      const files = await LegacyFileSystem.readDirectoryAsync(uri);
       for (const file of files) {
         const fullUri = uri + (uri.endsWith('/') ? '' : '/') + file;
         const lowerName = file.toLowerCase();
         
         try {
-          const fileInfo = await FileSystem.getInfoAsync(fullUri);
+          const fileInfo = await LegacyFileSystem.getInfoAsync(fullUri);
           if (fileInfo.isDirectory) {
             await walk(fullUri);
           } else if (AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext))) {
@@ -211,9 +213,9 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
       const lrcUri = dirPath + nameWithoutExt + '.lrc';
       let lrcContent = undefined;
       try {
-        const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
+        const lrcInfo = await LegacyFileSystem.getInfoAsync(lrcUri);
         if (lrcInfo.exists) {
-          lrcContent = await FileSystem.readAsStringAsync(lrcUri);
+          lrcContent = await LegacyFileSystem.readAsStringAsync(lrcUri);
         }
       } catch (e) {}
 
