@@ -955,8 +955,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <MusicContext.Provider value={{
       currentTrack: mappedCurrentTrack, 
       isPlaying: isTransitioning || playing || false, 
-      positionMillis: position * 1000, 
-      durationMillis: duration * 1000, 
+      positionMillis: isTransitioning ? 0 : position * 1000, 
+      durationMillis: isTransitioning ? (mappedCurrentTrack?.duration || 0) : duration * 1000, 
       isShuffle, 
       repeatMode, 
       favorites, 
