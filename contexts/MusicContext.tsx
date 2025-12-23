@@ -89,6 +89,16 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return result;
   };
 
+  const addTracksInBatches = async (tracks: any[]) => {
+      const CHUNK_SIZE = 50; 
+      for (let i = 0; i < tracks.length; i += CHUNK_SIZE) {
+          const chunk = tracks.slice(i, i + CHUNK_SIZE);
+          await TrackPlayer.add(chunk);
+          // Yield to event loop to prevent UI freeze
+          await new Promise(resolve => setTimeout(resolve, 10));
+      }
+  };
+
   // Helper to serialize Track to RNTP Track
   const toRntpTrack = (track: Track) => {
     const rntpTrack = {
@@ -101,7 +111,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       duration: track.duration ? track.duration / 1000 : 0, 
       original: track 
     };
-    logToFile(`Mapping track for RNTP: ${track.title} | URL: ${rntpTrack.url} | Dur: ${rntpTrack.duration}`);
+    // logToFile removed for performance in large lists
     return rntpTrack;
   };
 
@@ -493,8 +503,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (lastPlayRequestId.current !== requestId) return;
 
       const rntpTracks = queueToPlay.map(toRntpTrack);
-      await logToFile(`PlayTrack: Adding ${rntpTracks.length} tracks to native player.`);
-      await TrackPlayer.add(rntpTracks);
+      await logToFile(`PlayTrack: Adding ${rntpTracks.length} tracks to native player (batched).`);
+      await addTracksInBatches(rntpTracks);
       
       // 5. Skip to correct index
       // IMPORTANT: We must wait for 'add' to finish before skipping.
@@ -634,7 +644,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             
             setPlaylistState(newQueue);
             await TrackPlayer.reset();
-            await TrackPlayer.add(newQueue.map(toRntpTrack));
+            await addTracksInBatches(newQueue.map(toRntpTrack));
             const newIndex = newQueue.findIndex(t => t.id === currentId);
             if (newIndex !== -1) await TrackPlayer.skip(newIndex);
             await TrackPlayer.play();
