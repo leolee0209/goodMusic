@@ -49,26 +49,20 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isShuffle, setIsShuffle] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
 
-  // Monitor playing state to clear transitioning
+  // Monitor active track to clear transitioning state
   useEffect(() => {
-    if (playing && isTransitioning) {
-      // Only clear transitioning if the active track matches what we expect
-      // checking URL or Title as a proxy for ID since RNTP ID might be relative
-      if (activeTrack && optimisticTrack) {
-          const isSameTrack = activeTrack.title === optimisticTrack.title || 
-                              activeTrack.url === optimisticTrack.uri ||
-                              (activeTrack.url as string)?.endsWith(optimisticTrack.uri);
-          
-          if (isSameTrack) {
-              setIsTransitioning(false);
-              setOptimisticTrack(null);
-          }
-      } else if (!optimisticTrack) {
-          // If no optimistic track set but we are transitioning and playing, likely safe to clear
-          setIsTransitioning(false);
-      }
+    if (isTransitioning && optimisticTrack && activeTrack) {
+       // We only care if the Active Track has finally updated to match our Optimistic Track
+       const isTitleMatch = activeTrack.title === optimisticTrack.title;
+       const isUrlMatch = activeTrack.url === optimisticTrack.uri || 
+                          (activeTrack.url as string)?.endsWith(optimisticTrack.uri);
+       
+       if (isTitleMatch || isUrlMatch) {
+           setIsTransitioning(false);
+           setOptimisticTrack(null);
+       }
     }
-  }, [playing, isTransitioning, activeTrack, optimisticTrack]);
+  }, [activeTrack, optimisticTrack, isTransitioning]);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
@@ -509,18 +503,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // 7. Post-Play Verification
       setTimeout(async () => {
-        // Only force clear if we are NOT playing yet. 
-        // If we are playing, the useEffect will handle it more smoothly.
-        const state = await TrackPlayer.getState();
-        if (state !== State.Playing && state !== State.Buffering) {
-             setIsTransitioning(false);
-             setOptimisticTrack(null);
-        }
-        
         try {
+          const state = await TrackPlayer.getState();
           const queue = await TrackPlayer.getQueue();
           const current = await TrackPlayer.getActiveTrackIndex();
-          await logToFile(`PlayTrack: Verification (+1000ms) - State: ${state}, QueueSize: ${queue.length}, CurrentIndex: ${current}`);
+          await logToFile(`PlayTrack: Verification (+2000ms) - State: ${state}, QueueSize: ${queue.length}, CurrentIndex: ${current}`);
           
           if (state === State.Error || state === State.None) {
              await logToFile('PlayTrack: Player seems stuck in Error/None state. Attempting recovery...', 'WARN');
@@ -529,7 +516,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         } catch (e) {
            await logToFile(`PlayTrack: Post-play verification failed: ${e}`, 'WARN');
         }
-      }, 2000); // Increased timeout to give buffer more time
+      }, 2000);
 
     } catch (error) {
       setOptimisticTrack(null);
