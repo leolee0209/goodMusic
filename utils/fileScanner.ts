@@ -1,4 +1,4 @@
-import * as LegacyLegacyFileSystem from 'expo-file-system/legacy';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 import { Track } from '../types';
