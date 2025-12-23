@@ -21,7 +21,55 @@ export default function SettingsScreen() {
     const router = useRouter();
     const { refreshLibrary, importLocalFolder, pickAndImportFiles, isScanning, scanMessage, scanProgress, rescanLyrics, refreshAllMetadata } = useMusic();
     const { defaultTab, setDefaultTab, themeColor, setThemeColor } = useSettings();
-  ...
+
+    const [showTabPicker, setShowTabPicker] = React.useState(false);
+
+    const handleRefresh = async () => {
+      await refreshLibrary();
+    };
+
+    const handleImportFolder = async () => {
+      await importLocalFolder();
+    };
+
+    const handleImportFiles = async () => {
+      await pickAndImportFiles();
+    };
+
+    const handleRefreshAllMetadata = () => {
+      Alert.alert(
+        "Reload All Metadata",
+        "This will re-read tags and artwork for every track in your library. This may take a while if you have many songs. Continue?",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Continue", onPress: () => refreshAllMetadata() }
+        ]
+      );
+    };
+
+    const handleRescanLyrics = async () => {
+      await rescanLyrics();
+    };
+
+    const openGithub = () => {
+      Linking.openURL('https://github.com/leovigna/goodMusic');
+    };
+
+    const progressPercent = scanProgress.total > 0 
+      ? (scanProgress.current / scanProgress.total) * 100 
+      : 0;
+
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <Ionicons name="arrow-back" size={24} color="#fff" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Settings</Text>
+          <View style={{ width: 40 }} />
+        </View>
+
+        <ScrollView contentContainerStyle={styles.scrollContent}>
           {isScanning && (
             <View style={styles.loadingContainer}>
               <View style={styles.loadingHeader}>

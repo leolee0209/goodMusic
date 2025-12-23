@@ -319,7 +319,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               ],
               progressUpdateEventInterval: 1,
               android: {
-                  appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlayback
+                  appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification
               }
             });
             await logToFile('Setup: Capabilities updated.');

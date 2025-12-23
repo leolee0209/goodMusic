@@ -245,6 +245,26 @@ export default function GroupDetailScreen() {
     return filtered;
   }, [activeGroup, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, history, sortOrder]);
 
+  const groupArtwork = activeGroup?.tracks.find(t => t.artwork)?.artwork;
+
+  // Parallax / Cover Styles
+  const heroAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        {
+          translateY: interpolate(scrollY.value, [-HERO_HEIGHT, 0, HERO_HEIGHT], [-HERO_HEIGHT / 2, 0, 0], Extrapolation.CLAMP)
+        }
+      ],
+    };
+  });
+
+  const headerAnimatedStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(scrollY.value, [HERO_HEIGHT - 100, HERO_HEIGHT], [0, 1], Extrapolation.CLAMP);
+    return {
+      backgroundColor: `rgba(18, 18, 18, ${opacity})`,
+    };
+  });
+
   if (!activeGroup) {
     return (
       <SafeAreaView style={styles.container}>
@@ -318,8 +338,6 @@ export default function GroupDetailScreen() {
       params: { title: album.name, type: 'album' }
     });
   };
-
-  const groupArtwork = activeGroup.tracks.find(t => t.artwork)?.artwork;
 
   const renderTrackItem = ({ item }: { item: Track }) => {
     const isCurrent = currentTrack?.id === item.id;
@@ -414,24 +432,6 @@ export default function GroupDetailScreen() {
   const isSearching = searchQuery.trim().length > 0;
   const showSongsList = isSearching || activeTab === 'songs' || type !== 'artist';
 
-  // Parallax / Cover Styles
-  const heroAnimatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [
-        {
-          translateY: interpolate(scrollY.value, [-HERO_HEIGHT, 0, HERO_HEIGHT], [-HERO_HEIGHT / 2, 0, 0], Extrapolation.CLAMP)
-        }
-      ],
-    };
-  });
-
-  const headerAnimatedStyle = useAnimatedStyle(() => {
-    const opacity = interpolate(scrollY.value, [HERO_HEIGHT - 100, HERO_HEIGHT], [0, 1], Extrapolation.CLAMP);
-    return {
-      backgroundColor: `rgba(18, 18, 18, ${opacity})`,
-    };
-  });
-
   return (
     <View style={styles.container}>
       {/* Background Hero */}
@@ -498,8 +498,8 @@ export default function GroupDetailScreen() {
 
       {/* Main List */}
       <Animated.FlatList
-        data={showSongsList ? filteredTracks : artistAlbums}
-        renderItem={showSongsList ? renderTrackItem : ({ item }: any) => renderAlbumItem({ item })}
+        data={(showSongsList ? filteredTracks : artistAlbums) as any}
+        renderItem={showSongsList ? renderTrackItem : (({ item }: any) => renderAlbumItem({ item })) as any}
         keyExtractor={(item: any) => item.id}
         contentContainerStyle={[styles.listContent, { paddingTop: HERO_HEIGHT }]}
         onScroll={scrollHandler}
