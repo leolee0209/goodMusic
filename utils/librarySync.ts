@@ -4,18 +4,30 @@ import { Track } from '../types';
 import { parseMetadata, discoverAudioFiles } from './fileScanner';
 import { logToFile } from './logger';
 
-export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onDiscovery?: (total: number) => void) => {
-  await logToFile('Starting library sync...');
+export const ensureMusicDirectory = async () => {
+  const internalMusicDir = FileSystem.documentDirectory + 'music/';
   try {
-    const internalMusicDir = FileSystem.documentDirectory + 'music/';
-
-    // Ensure the directory exists
     const dirInfo = await FileSystem.getInfoAsync(internalMusicDir);
     if (!dirInfo.exists) {
       await logToFile(`Music directory does not exist, creating: ${internalMusicDir}`);
       await FileSystem.makeDirectoryAsync(internalMusicDir, { intermediates: true });
+    }
+
+    const files = await FileSystem.readDirectoryAsync(internalMusicDir);
+    if (files.length === 0) {
+      await logToFile('Music directory is empty, creating placeholder file.');
       await FileSystem.writeAsStringAsync(internalMusicDir + 'PLACE_MUSIC_HERE.txt', 'Place your audio files (.mp3, .m4a, .wav, .flac) in this folder to sync them with the library.');
     }
+  } catch (e) {
+    await logToFile(`Error ensuring music directory: ${e}`, 'ERROR');
+  }
+};
+
+export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onDiscovery?: (total: number) => void) => {
+  await logToFile('Starting library sync...');
+  try {
+    const internalMusicDir = FileSystem.documentDirectory + 'music/';
+    await ensureMusicDirectory();
 
     // Phase 1: Discovery
     await logToFile(`Phase 1: Discovering files in ${internalMusicDir}`);

@@ -16,7 +16,7 @@ import { Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { getAllTracks, initDatabase, addToHistory, getPlaybackHistory, removeDuplicates } from '../utils/database';
-import { syncLibrary } from '../utils/librarySync';
+import { syncLibrary, ensureMusicDirectory } from '../utils/librarySync';
 import { logToFile } from '../utils/logger';
 import { toAbsoluteUri, toRelativePath } from '../utils/pathUtils';
 
@@ -352,6 +352,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const loadData = async () => {
       try {
           await logToFile('App Startup: Loading database and initial tracks...');
+          await ensureMusicDirectory();
           await initDatabase();
           const tracks = await getAllTracks();
           
@@ -898,7 +899,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const mappedCurrentTrack: Track | null = optimisticTrack || (activeTrack ? {
-    id: activeTrack.id || '',
+    id: toAbsoluteUri(activeTrack.id), 
     title: activeTrack.title || 'Unknown Title',
     artist: activeTrack.artist || 'Unknown Artist',
     album: activeTrack.album,
