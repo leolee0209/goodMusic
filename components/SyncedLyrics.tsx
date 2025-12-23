@@ -19,7 +19,7 @@ interface LyricLine {
 const parseLrc = (lrc: string): LyricLine[] => {
   const lines = lrc.split('\n');
   const result: LyricLine[] = [];
-  const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
+  const timeRegex = /\{(\d{2}):(\d{2})\.(\d{2,3})\}/;
 
   let hasAnySynced = false;
 
