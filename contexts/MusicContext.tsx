@@ -52,12 +52,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Monitor active track to clear transitioning state
   useEffect(() => {
     if (isTransitioning && optimisticTrack && activeTrack) {
-       // We only care if the Active Track has finally updated to match our Optimistic Track
-       const isTitleMatch = activeTrack.title === optimisticTrack.title;
-       const isUrlMatch = activeTrack.url === optimisticTrack.uri || 
-                          (activeTrack.url as string)?.endsWith(optimisticTrack.uri);
+       // Simplify check using relative paths (ID in RNTP is set to relative path)
+       const activeRelativeId = activeTrack.id; // already relative from toRntpTrack
+       const optimisticRelativeId = toRelativePath(optimisticTrack.id);
        
-       if (isTitleMatch || isUrlMatch) {
+       if (activeRelativeId === optimisticRelativeId) {
            setIsTransitioning(false);
            setOptimisticTrack(null);
        }
@@ -71,6 +70,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateQueue = useRef<Promise<void>>(Promise.resolve());
   const playerReadyPromise = useRef<Promise<void> | null>(null);
+  const lastPlayRequestId = useRef<string>("");
 
   // Helper to resolve artwork URIs (handles relative paths from DB)
   const resolveArtworkUri = (uri: string | null | undefined) => {
@@ -420,8 +420,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const playTrack = async (track: Track, newQueue?: Track[], title?: string, origin?: PlaybackOrigin) => {
+    const requestId = track.id + Date.now();
+    lastPlayRequestId.current = requestId;
+
     try {
-      await logToFile(`PlayTrack: Request for "${track.title}" (ID: ${track.id})`);
+      await logToFile(`PlayTrack: Request for "${track.title}" (ID: ${track.id}) - ReqID: ${requestId}`);
       setOptimisticTrack(track);
       setIsTransitioning(true);
 
@@ -433,6 +436,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       
       // 1. Ensure Player is ready
       await setupPlayer(); 
+
+      // Check for stale request
+      if (lastPlayRequestId.current !== requestId) {
+          await logToFile(`PlayTrack: Aborted stale request ${requestId}`);
+          return;
+      }
       
       // 2. Prepare the logical queue
       let finalQueue = newQueue ? [...newQueue] : [...originalPlaylist];
@@ -473,10 +482,16 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       setPlaylistState(queueToPlay);
       
+      // Check for stale request before native operations
+      if (lastPlayRequestId.current !== requestId) return;
+
       // 4. Update Native Player
       await logToFile(`PlayTrack: Resetting native player...`);
       await TrackPlayer.reset();
       
+      // Check for stale request
+      if (lastPlayRequestId.current !== requestId) return;
+
       const rntpTracks = queueToPlay.map(toRntpTrack);
       await logToFile(`PlayTrack: Adding ${rntpTracks.length} tracks to native player.`);
       await TrackPlayer.add(rntpTracks);
@@ -484,6 +499,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // 5. Skip to correct index
       // IMPORTANT: We must wait for 'add' to finish before skipping.
       if (startIndex > 0) {
+        // Check for stale request
+        if (lastPlayRequestId.current !== requestId) return;
+
         await logToFile(`PlayTrack: Skipping to index ${startIndex}.`);
         try {
             // Short delay to ensure native queue is ready
@@ -497,12 +515,16 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       // 6. Start Playback
+      if (lastPlayRequestId.current !== requestId) return;
       await applyRepeatMode(repeatMode);
       await TrackPlayer.play();
       await logToFile('PlayTrack: Play command sent.');
 
       // 7. Post-Play Verification
       setTimeout(async () => {
+        // If request is stale, don't run verification logic that might interfere
+        if (lastPlayRequestId.current !== requestId) return;
+
         try {
           const state = await TrackPlayer.getState();
           const queue = await TrackPlayer.getQueue();
@@ -519,9 +541,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }, 2000);
 
     } catch (error) {
-      setOptimisticTrack(null);
-      setIsTransitioning(false);
-      await logToFile(`PlayTrack: CRITICAL ERROR: ${error}`, 'ERROR');
+      if (lastPlayRequestId.current === requestId) {
+          setOptimisticTrack(null);
+          setIsTransitioning(false);
+          await logToFile(`PlayTrack: CRITICAL ERROR: ${error}`, 'ERROR');
+      }
     }
   };
 
