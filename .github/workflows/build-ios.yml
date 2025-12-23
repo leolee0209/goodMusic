@@ -9,11 +9,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- NEW STEP: Switch to Xcode 16.1+ ---
       - name: Set up Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.1' # Or 'latest-stable'
+          xcode-version: '16.1'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -26,24 +25,31 @@ jobs:
 
       - name: Calculate Prebuild Cache Key
         id: cache-key
-        run: echo "key=${{ runner.os }}-ios-prebuild-${{ hashFiles('app.json', 'package-lock.json', 'patches/**') }}" >> $GITHUB_OUTPUT
+        run: echo "key=${{ runner.os }}-ios-prebuild-${{ hashFiles('app.json', 'package-lock.json') }}" >> $GITHUB_OUTPUT
 
-      - name: Cache Prebuild (iOS)
-        id: cache-prebuild
+      - name: Cache iOS Directory
+        id: cache-ios
         uses: actions/cache@v4
         with:
           path: ios
           key: ${{ steps.cache-key.outputs.key }}
 
       - name: Expo Prebuild
-        if: steps.cache-prebuild.outputs.cache-hit != 'true'
-        run: npx expo prebuild --platform ios
+        if: steps.cache-ios.outputs.cache-hit != 'true'
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install
+        shell: bash
 
       - name: Build Unsigned IPA
         run: |
           WORKSPACE_PATH=$(find ios -maxdepth 1 -name "*.xcworkspace" | head -n 1)
           SCHEME_NAME=$(basename "$WORKSPACE_PATH" .xcworkspace)
           
+          # Use clean to ensure fresh build of dependencies like expo-sqlite
           xcodebuild -workspace "$WORKSPACE_PATH" \
                      -scheme "$SCHEME_NAME" \
                      -configuration Release \
@@ -57,7 +63,8 @@ jobs:
                      GCC_WARN_INHIBIT_ALL_WARNINGS=YES \
                      DEBUG_INFORMATION_FORMAT=dwarf \
                      COMPILER_INDEX_STORE_ENABLE=NO \
-                     archive
+                     CLANG_ENABLE_MODULES=YES \
+                     clean archive
 
       - name: Package IPA
         run: |
