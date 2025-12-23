@@ -78,7 +78,6 @@ export const SortBar: React.FC<SortBarProps> = ({
       {/* Play/Shuffle Actions (Now on Right) */}
       {(onPlayAll || onShuffleAll) && (
         <View style={styles.actionGroup}>
-           <View style={styles.divider} />
            {onPlayAll && (
             <TouchableOpacity style={styles.iconButton} onPress={onPlayAll}>
               <Ionicons name="play" size={20} color={themeColor} />
@@ -135,12 +134,6 @@ const styles = StyleSheet.create({
   text: {
     fontSize: 12,
     fontWeight: '600',
-  },
-  divider: {
-    width: 1,
-    height: 20,
-    backgroundColor: '#333',
-    marginRight: 4,
   },
   condensedOverlay: {
     position: 'absolute',

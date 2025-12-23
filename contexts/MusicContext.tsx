@@ -14,7 +14,7 @@ import { Track, MusicContextType, RepeatMode, PlaybackOrigin, Playlist } from '.
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { getAllTracks, initDatabase, addToHistory, getPlaybackHistory } from '../utils/database';
+import { getAllTracks, initDatabase, addToHistory, getPlaybackHistory, removeDuplicates } from '../utils/database';
 import { syncLibrary } from '../utils/librarySync';
 import { logToFile } from '../utils/logger';
 import { toAbsoluteUri, toRelativePath } from '../utils/pathUtils';
@@ -199,6 +199,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       if (updates.length > 0) {
           await insertTracks(updates);
+          await removeDuplicates(); // Clean up if any duplicates were created
           setLibrary(prev => {
               const updateMap = new Map(updates.map(u => [u.id, u]));
               return prev.map(t => updateMap.get(t.id) || t).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
@@ -381,7 +382,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
         if (favs !== null) {
             const parsedFavs = JSON.parse(favs);
-            setFavorites(parsedFavs);
+            const absoluteFavs = parsedFavs.map((id: string) => toAbsoluteUri(id));
+            setFavorites(absoluteFavs);
             await logToFile(`Loaded ${parsedFavs.length} favorites.`);
         }
         if (lyrics !== null) setShowLyrics(JSON.parse(lyrics));
@@ -618,7 +620,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const isFav = favorites.includes(id);
     const newFavs = isFav ? favorites.filter(fid => fid !== id) : [...favorites, id];
     setFavorites(newFavs);
-    AsyncStorage.setItem(STORAGE_KEY_FAVORITES, JSON.stringify(newFavs));
+    
+    const relativeFavs = newFavs.map(fid => toRelativePath(fid));
+    AsyncStorage.setItem(STORAGE_KEY_FAVORITES, JSON.stringify(relativeFavs));
+    
     logToFile(`Action: Favorite toggled for ${id} (${!isFav ? 'Added' : 'Removed'})`);
   };
 

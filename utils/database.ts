@@ -192,9 +192,10 @@ export const addTracksToPlaylist = async (playlistId: string, trackIds: string[]
     let nextOrder = (lastOrderRow?.maxOrder ?? -1) + 1;
 
     for (const trackId of trackIds) {
+      const stableId = toRelativePath(trackId);
       await database.runAsync(
         'INSERT OR IGNORE INTO playlist_tracks (playlistId, trackId, orderIndex) VALUES (?, ?, ?)',
-        [playlistId, trackId, nextOrder++]
+        [playlistId, stableId, nextOrder++]
       );
     }
   });
@@ -204,9 +205,10 @@ export const removeFromPlaylist = async (playlistId: string, trackIds: string[])
   const database = await initDatabase();
   await database.withTransactionAsync(async () => {
     for (const trackId of trackIds) {
+      const stableId = toRelativePath(trackId);
       await database.runAsync(
         'DELETE FROM playlist_tracks WHERE playlistId = ? AND trackId = ?',
-        [playlistId, trackId]
+        [playlistId, stableId]
       );
     }
   });
@@ -247,9 +249,10 @@ export const getFolders = async (): Promise<string[]> => {
 export const addToHistory = async (trackId: string) => {
   const database = await initDatabase();
   const now = Date.now();
+  const stableId = toRelativePath(trackId);
   await database.runAsync(
     'INSERT OR REPLACE INTO playback_history (trackId, playedAt) VALUES (?, ?)',
-    [trackId, now]
+    [stableId, now]
   );
   
   const rows = await database.getAllAsync<any>(
@@ -265,5 +268,45 @@ export const addToHistory = async (trackId: string) => {
 export const getPlaybackHistory = async (): Promise<string[]> => {
   const database = await initDatabase();
   const rows = await database.getAllAsync<any>('SELECT trackId FROM playback_history ORDER BY playedAt DESC');
-  return rows.map(row => row.trackId);
+  return rows.map(row => toAbsoluteUri(row.trackId));
+};
+
+export const removeDuplicates = async () => {
+  const database = await initDatabase();
+  await logToFile('Maintenance: Checking for duplicates...');
+  
+  // Find duplicates based on Title + Artist + Album + Duration
+  const duplicates = await database.getAllAsync<any>(`
+    SELECT id, title, artist, album, duration, COUNT(*) as count
+    FROM tracks
+    GROUP BY title, artist, album, duration
+    HAVING count > 1
+  `);
+
+  if (duplicates.length === 0) {
+      await logToFile('Maintenance: No duplicates found.');
+      return;
+  }
+
+  await logToFile(`Maintenance: Found ${duplicates.length} sets of duplicates. Cleaning up...`);
+  
+  await database.withTransactionAsync(async () => {
+    for (const dup of duplicates) {
+      // Get all IDs for this duplicate set
+      const tracks = await database.getAllAsync<any>(
+        `SELECT id FROM tracks WHERE title = ? AND artist = ? AND album = ? AND duration = ?`,
+        [dup.title, dup.artist, dup.album, dup.duration]
+      );
+      
+      // Keep the first one, delete the rest
+      // We sort by ID length or lexicographically to be deterministic
+      tracks.sort((a, b) => a.id.localeCompare(b.id));
+      
+      const toDelete = tracks.slice(1);
+      for (const t of toDelete) {
+        await database.runAsync('DELETE FROM tracks WHERE id = ?', [t.id]);
+        await logToFile(`Maintenance: Deleted duplicate track ID: ${t.id}`);
+      }
+    }
+  });
 };

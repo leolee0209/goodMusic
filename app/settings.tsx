@@ -241,8 +241,8 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   scrollContent: {
-    flex: 1,
     paddingHorizontal: 20,
+    paddingBottom: 100,
   },
   loadingContainer: {
     marginTop: 20,

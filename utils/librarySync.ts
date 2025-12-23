@@ -1,5 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { insertTracks, getAllTracks, deleteTrack, getTrackById, getAllTrackUris } from './database';
+import { insertTracks, getAllTracks, deleteTrack, getTrackById, getAllTrackUris, removeDuplicates } from './database';
 import { Track } from '../types';
 import { parseMetadata, discoverAudioFiles } from './fileScanner';
 import { logToFile } from './logger';
@@ -121,6 +121,9 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
     
     if (deletedCount > 0) await logToFile(`Deleted ${deletedCount} missing tracks from database.`);
     
+    // Phase 4: Deduplication
+    await removeDuplicates();
+
     await logToFile('Library sync completed successfully.');
     return finalTracks;
   } catch (e) {
