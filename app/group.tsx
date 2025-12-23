@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Image, Alert, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
@@ -12,6 +12,10 @@ import { normalizeForSearch } from '../utils/stringUtils';
 import { formatDuration } from '../utils/timeUtils';
 import { SortBar } from '../components/SortBar';
 import { SortModal } from '../components/SortModal';
+import Animated, { useAnimatedScrollHandler, useSharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+
+const HERO_HEIGHT = 300;
+const HEADER_HEIGHT = 100; // Approximate height of top bar
 
 export default function GroupDetailScreen() {
   const router = useRouter();
@@ -25,6 +29,7 @@ export default function GroupDetailScreen() {
 
   // Sort State
   const [sortOption, setSortOption] = useState('Alphabetical');
+  const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('ASC');
   const [sortModalVisible, setSortModalVisible] = useState(false);
 
   // Selection Mode State
@@ -35,6 +40,12 @@ export default function GroupDetailScreen() {
   const [actionSheetVisible, setActionSheetVisible] = useState(false);
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
 
+  // Animation State
+  const scrollY = useSharedValue(0);
+  const scrollHandler = useAnimatedScrollHandler(event => {
+    scrollY.value = event.contentOffset.y;
+  });
+
   // Sync state if param changes
   useEffect(() => {
     if (f === 'true') setShowFavoritesOnly(true);
@@ -42,7 +53,8 @@ export default function GroupDetailScreen() {
 
   // Reset sort when tab changes
   useEffect(() => {
-    setSortOption(activeTab === 'songs' && sortOption === 'Track Count' ? 'Alphabetical' : 'Alphabetical');
+    setSortOption('Alphabetical');
+    setSortOrder('ASC');
   }, [activeTab]);
 
   const loadPlaylistTracks = async () => {
@@ -158,7 +170,6 @@ export default function GroupDetailScreen() {
     
     const albumsMap: Record<string, Track[]> = {};
     activeGroup.tracks.forEach(track => {
-      // If we are filtering by favorites, only include tracks that are favorites
       if (showFavoritesOnly && !favorites.includes(track.id)) return;
       
       const album = track.album || 'Unknown Album';
@@ -173,60 +184,17 @@ export default function GroupDetailScreen() {
       type: 'album'
     }));
 
-    // SEARCH FILTERING
-    if (searchQuery.trim() !== '') {
-      const normalizedQuery = normalizeForSearch(searchQuery);
-      const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
-      
-      const matchName: typeof allAlbums = [];
-      const matchSongs: typeof allAlbums = [];
-
-      allAlbums.forEach(album => {
-          const albumNameNorm = normalizeForSearch(album.name);
-          // Check Name Match
-          if (keywords.every(k => albumNameNorm.includes(k))) {
-              matchName.push(album);
-              return;
-          }
-
-          // Check Song Match
-          const hasMatchingSong = album.tracks.some(track => {
-               const title = normalizeForSearch(track.title);
-               return keywords.every(k => title.includes(k));
-          });
-
-          if (hasMatchingSong) {
-              matchSongs.push(album);
-          }
-      });
-
-      // Sort with search
-      if (sortOption === 'Track Count') {
-          matchName.sort((a, b) => b.tracks.length - a.tracks.length);
-          matchSongs.sort((a, b) => b.tracks.length - a.tracks.length);
-      } else {
-          matchName.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-          matchSongs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-      }
-
-      const results: any[] = [];
-      if (matchName.length > 0) {
-          results.push({ type: 'header', title: 'Matching Albums', id: 'hdr-matches' });
-          results.push(...matchName);
-      }
-      if (matchSongs.length > 0) {
-          results.push({ type: 'header', title: 'Contains Matching Songs', id: 'hdr-contains' });
-          results.push(...matchSongs);
-      }
-      console.log(`[GroupSearch] Query: "${searchQuery}" -> NameMatches: ${matchName.length}, SongMatches: ${matchSongs.length}`);
-      return results;
-    }
-
     if (sortOption === 'Track Count') {
-        return allAlbums.sort((a, b) => b.tracks.length - a.tracks.length);
+        allAlbums.sort((a, b) => b.tracks.length - a.tracks.length);
+    } else {
+        allAlbums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     }
-    return allAlbums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-  }, [activeGroup, searchQuery, showFavoritesOnly, favorites, sortOption]);
+
+    if (sortOrder === 'DESC') {
+      allAlbums.reverse();
+    }
+    return allAlbums;
+  }, [activeGroup, showFavoritesOnly, favorites, sortOption, sortOrder]);
 
   const filteredTracks = useMemo(() => {
     if (!activeGroup) return [];
@@ -260,7 +228,6 @@ export default function GroupDetailScreen() {
            return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
          });
     } else if (type === 'album') {
-      // Sort by track number if viewing a single album
       filtered.sort((a, b) => {
         if (a.trackNumber && b.trackNumber) return a.trackNumber - b.trackNumber;
         if (a.trackNumber) return -1;
@@ -268,12 +235,15 @@ export default function GroupDetailScreen() {
         return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
       });
     } else {
-      // Default to alphabetical for other views
       filtered.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
     }
 
+    if (sortOrder === 'DESC') {
+      filtered.reverse();
+    }
+
     return filtered;
-  }, [activeGroup, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, history]);
+  }, [activeGroup, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, history, sortOrder]);
 
   if (!activeGroup) {
     return (
@@ -296,7 +266,36 @@ export default function GroupDetailScreen() {
         favoritesOnly: showFavoritesOnly
       };
       await playTrack(track, filteredTracks, activeGroup.title, origin);
-      // Removed router.push('/player') to prevent auto-opening modal
+    }
+  };
+
+  const handlePlayAll = async () => {
+    if (showSongsList) {
+      if (filteredTracks.length === 0) return;
+      const origin: PlaybackOrigin = { type: activeGroup.type as any, title: activeGroup.title };
+      await playTrack(filteredTracks[0], filteredTracks, origin.title, origin);
+    } else {
+      // Artist > Albums tab
+      if (artistAlbums.length === 0) return;
+      const allTracks = artistAlbums.flatMap(a => a.tracks);
+      const origin: PlaybackOrigin = { type: 'artist', title: activeGroup.title };
+      await playTrack(allTracks[0], allTracks, origin.title, origin);
+    }
+  };
+
+  const handleShuffleAll = async () => {
+    if (showSongsList) {
+      if (filteredTracks.length === 0) return;
+      const origin: PlaybackOrigin = { type: activeGroup.type as any, title: activeGroup.title };
+      const randomIndex = Math.floor(Math.random() * filteredTracks.length);
+      await playTrack(filteredTracks[randomIndex], filteredTracks, origin.title, origin);
+    } else {
+      // Artist > Albums tab - Shuffle the albums themselves
+      if (artistAlbums.length === 0) return;
+      const shuffledAlbums = [...artistAlbums].sort(() => Math.random() - 0.5);
+      const allTracks = shuffledAlbums.flatMap(a => a.tracks);
+      const origin: PlaybackOrigin = { type: 'artist', title: activeGroup.title };
+      await playTrack(allTracks[0], allTracks, origin.title, origin);
     }
   };
 
@@ -313,9 +312,7 @@ export default function GroupDetailScreen() {
     }
   };
 
-
   const handleAlbumPress = (album: { name: string, tracks: Track[] }) => {
-    // Push new screen with params for animation and history
     router.push({
       pathname: '/group',
       params: { title: album.name, type: 'album' }
@@ -323,14 +320,6 @@ export default function GroupDetailScreen() {
   };
 
   const groupArtwork = activeGroup.tracks.find(t => t.artwork)?.artwork;
-
-  const handleSearchGlobally = () => {
-    // Navigate to index with the search query
-    router.replace({
-      pathname: '/',
-      params: { q: searchQuery }
-    });
-  };
 
   const renderTrackItem = ({ item }: { item: Track }) => {
     const isCurrent = currentTrack?.id === item.id;
@@ -420,10 +409,33 @@ export default function GroupDetailScreen() {
       return [{ label: 'Alphabetical', value: 'Alphabetical' }];
   };
 
+  // Determine which list to show
+  // If searching in Artist mode, show filtered Songs, otherwise show the active tab (Songs or Albums)
+  const isSearching = searchQuery.trim().length > 0;
+  const showSongsList = isSearching || activeTab === 'songs' || type !== 'artist';
+
+  // Parallax / Cover Styles
+  const heroAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        {
+          translateY: interpolate(scrollY.value, [-HERO_HEIGHT, 0, HERO_HEIGHT], [-HERO_HEIGHT / 2, 0, 0], Extrapolation.CLAMP)
+        }
+      ],
+    };
+  });
+
+  const headerAnimatedStyle = useAnimatedStyle(() => {
+    const opacity = interpolate(scrollY.value, [HERO_HEIGHT - 100, HERO_HEIGHT], [0, 1], Extrapolation.CLAMP);
+    return {
+      backgroundColor: `rgba(18, 18, 18, ${opacity})`,
+    };
+  });
+
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Hero Header */}
-      <View style={styles.heroContainer}>
+    <View style={styles.container}>
+      {/* Background Hero */}
+      <Animated.View style={[styles.heroContainer, heroAnimatedStyle]}>
         {groupArtwork ? (
           <Image 
             source={{ uri: groupArtwork }} 
@@ -436,10 +448,18 @@ export default function GroupDetailScreen() {
           </View>
         )}
         <View style={styles.heroOverlay} />
-        
-        {/* Floating Top Controls / Selection Bar */}
+        <View style={styles.heroTextContent}>
+          <Text style={styles.heroTitle} numberOfLines={2}>{activeGroup.title}</Text>
+          <Text style={[styles.heroSubtitle, { color: themeColor }]}>
+            {activeGroup.type?.toUpperCase()} • {activeGroup.tracks.length} SONGS
+          </Text>
+        </View>
+      </Animated.View>
+
+      {/* Fixed Top Header (Back / Search) */}
+      <Animated.View style={[styles.header, headerAnimatedStyle, isSelectionMode && { backgroundColor: themeColor, opacity: 1 }]}>
         {isSelectionMode ? (
-          <View style={[styles.header, styles.selectionBar, { backgroundColor: themeColor }]}>
+          <>
             <TouchableOpacity onPress={() => setSelectedTracks([])} style={styles.iconButton}>
               <Ionicons name="close" size={30} color="#fff" />
             </TouchableOpacity>
@@ -447,9 +467,9 @@ export default function GroupDetailScreen() {
             <TouchableOpacity onPress={handleBulkAddToPlaylist} style={styles.iconButton}>
               <Ionicons name="add-circle" size={30} color="#fff" />
             </TouchableOpacity>
-          </View>
+          </>
         ) : (
-          <View style={styles.header}>
+          <>
             <TouchableOpacity onPress={handleBack} style={styles.backIcon}>
               <Ionicons name="chevron-back" size={28} color="#fff" />
             </TouchableOpacity>
@@ -472,76 +492,48 @@ export default function GroupDetailScreen() {
                 color={showFavoritesOnly ? themeColor : "#fff"} 
               />
             </TouchableOpacity>
-          </View>
+          </>
         )}
+      </Animated.View>
 
-        {/* Hero Title Info */}
-        <View style={styles.heroTextContent}>
-          <Text style={styles.heroTitle} numberOfLines={2}>{activeGroup.title}</Text>
-          <Text style={[styles.heroSubtitle, { color: themeColor }]}>
-            {activeGroup.type?.toUpperCase()} • {activeGroup.tracks.length} SONGS
-          </Text>
-        </View>
-      </View>
-
-      {activeGroup.type === 'artist' && (
-        <View>
-          <View style={styles.tabs}>
-            <TouchableOpacity 
-              style={[styles.tab, activeTab === 'songs' && [styles.activeTab, { borderBottomColor: themeColor }]]}
-              onPress={() => setActiveTab('songs')}
-            >
-              <Text style={[styles.tabText, activeTab === 'songs' && styles.activeTabText]}>Songs</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[styles.tab, activeTab === 'albums' && [styles.activeTab, { borderBottomColor: themeColor }]]}
-              onPress={() => setActiveTab('albums')}
-            >
-              <Text style={[styles.tabText, activeTab === 'albums' && styles.activeTabText]}>Albums</Text>
-            </TouchableOpacity>
-          </View>
-          {/* Sort Bar for Artist View */}
-          <SortBar currentSort={sortOption} onPress={() => setSortModalVisible(true)} />
-        </View>
-      )}
-
-      {activeTab === 'songs' ? (
-        <FlatList
-          data={filteredTracks}
-          renderItem={renderTrackItem}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.listContent}
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No matches in this group</Text>
-              {searchQuery.length > 0 && (
-                <TouchableOpacity style={styles.globalSearchButton} onPress={handleSearchGlobally}>
-                  <Ionicons name="globe-outline" size={20} color={themeColor} />
-                  <Text style={[styles.globalSearchText, { color: themeColor }]}>Search Globally for "{searchQuery}"</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          }
-          ListFooterComponent={
-            searchQuery.length > 0 && filteredTracks.length > 0 ? (
-              <TouchableOpacity style={styles.globalSearchFooter} onPress={handleSearchGlobally}>
-                <Text style={[styles.globalSearchFooterText, { color: themeColor }]}>Search for "{searchQuery}" in entire library</Text>
-                <Ionicons name="arrow-forward" size={16} color={themeColor} />
-              </TouchableOpacity>
-            ) : null
-          }
-        />
-      ) : (
-        <FlatList
-          data={artistAlbums}
-          renderItem={({ item }) => {
-            if (item.type === 'header') return <Text style={[styles.sectionHeader, { color: themeColor, paddingHorizontal: 16 }]}>{item.title}</Text>;
-            return renderAlbumItem({ item });
-          }}
-          keyExtractor={item => item.id}
-          contentContainerStyle={styles.listContent}
-        />
-      )}
+      {/* Main List */}
+      <Animated.FlatList
+        data={showSongsList ? filteredTracks : artistAlbums}
+        renderItem={showSongsList ? renderTrackItem : ({ item }: any) => renderAlbumItem({ item })}
+        keyExtractor={(item: any) => item.id}
+        contentContainerStyle={[styles.listContent, { paddingTop: HERO_HEIGHT }]}
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
+        ListHeaderComponent={
+          // Tabs and SortBar should be part of the scrollable content, appearing right after the hero spacer
+          activeGroup.type === 'artist' && !isSearching ? (
+             <View style={styles.controlsContainer}>
+               <View style={styles.tabs}>
+                  <TouchableOpacity 
+                    style={[styles.tab, activeTab === 'songs' && [styles.activeTab, { borderBottomColor: themeColor }]]}
+                    onPress={() => setActiveTab('songs')}
+                  >
+                    <Text style={[styles.tabText, activeTab === 'songs' && styles.activeTabText]}>Songs</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.tab, activeTab === 'albums' && [styles.activeTab, { borderBottomColor: themeColor }]]}
+                    onPress={() => setActiveTab('albums')}
+                  >
+                    <Text style={[styles.tabText, activeTab === 'albums' && styles.activeTabText]}>Albums</Text>
+                  </TouchableOpacity>
+                </View>
+                <SortBar 
+                  currentSort={sortOption} 
+                  onPress={() => setSortModalVisible(true)} 
+                  sortOrder={sortOrder}
+                  onToggleSortOrder={() => setSortOrder(prev => prev === 'ASC' ? 'DESC' : 'ASC')}
+                  onPlayAll={activeTab === 'songs' || type !== 'artist' ? handlePlayAll : undefined}
+                  onShuffleAll={activeTab === 'songs' || type !== 'artist' ? handleShuffleAll : undefined}
+                />
+             </View>
+          ) : null
+        }
+      />
 
       {currentTrack && (
         <TouchableOpacity 
@@ -585,7 +577,7 @@ export default function GroupDetailScreen() {
         currentValue={sortOption}
         onSelect={setSortOption}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -595,10 +587,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#121212',
   },
   heroContainer: {
-    height: 300,
+    height: HERO_HEIGHT,
     width: '100%',
-    position: 'relative',
-    marginBottom: 10,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 0,
   },
   heroImage: {
     width: '100%',
@@ -635,10 +630,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     position: 'absolute',
-    top: 0,
+    top: 30, // SafeArea spacing
     left: 0,
     right: 0,
-    zIndex: 10,
+    zIndex: 100,
   },
   backIcon: {
     marginRight: 10,
@@ -652,6 +647,7 @@ const styles = StyleSheet.create({
   },
   selectionBar: {
     justifyContent: 'space-between',
+    paddingTop: 10,
   },
   selectionTitle: {
     color: '#fff',
@@ -662,6 +658,13 @@ const styles = StyleSheet.create({
     padding: 5,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  controlsContainer: {
+    backgroundColor: '#121212',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    marginTop: -20, // Negative margin to overlap slightly or just appear attached
+    paddingTop: 10,
   },
   tabs: {
     flexDirection: 'row',
@@ -687,25 +690,15 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   listContent: {
-    paddingHorizontal: 16,
     paddingBottom: 100,
-    paddingTop: 10,
-  },
-  sectionHeader: { 
-    fontSize: 14, 
-    fontWeight: 'bold', 
-    textTransform: 'uppercase', 
-    marginTop: 20, 
-    marginBottom: 10, 
-    letterSpacing: 1 
+    // Note: paddingTop is set dynamically in the FlatList
   },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 1, // Reduced margin for "covered" feeling, or keep 12
     padding: 8,
-    borderRadius: 12,
-    backgroundColor: '#1E1E1E',
+    backgroundColor: '#121212', // Critical for covering the hero
   },
   activeItem: {
     backgroundColor: '#282828',
@@ -748,7 +741,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  activeText: {},
   artist: {
     color: '#aaa',
     fontSize: 14,
@@ -767,6 +759,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#222',
+    backgroundColor: '#121212', // Critical
+    paddingHorizontal: 16,
   },
   albumIcon: {
     width: 50,
@@ -797,42 +791,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     textAlign: 'center',
     marginTop: 20,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    marginTop: 50,
-  },
-  emptyText: {
-    color: '#888',
-    fontSize: 16,
-    marginBottom: 20,
-  },
-  globalSearchButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E1E1E',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 25,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  globalSearchText: {
-    marginLeft: 10,
-    fontWeight: '600',
-  },
-  globalSearchFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#222',
-    marginTop: 10,
-  },
-  globalSearchFooterText: {
-    marginRight: 8,
-    fontSize: 14,
   },
   miniPlayer: {
     position: 'absolute',

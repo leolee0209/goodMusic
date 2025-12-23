@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMusic } from '../contexts/MusicContext';
@@ -9,9 +9,12 @@ import { Ionicons } from '@expo/vector-icons';
 import SearchBar from '../components/SearchBar';
 import { TrackActionSheet } from '../components/TrackActionSheet';
 import { normalizeForSearch } from '../utils/stringUtils';
-import { SortBar } from '../components/SortBar';
+import { SortBar, ViewMode } from '../components/SortBar';
 import { SortModal } from '../components/SortModal';
 import { formatDuration } from '../utils/timeUtils';
+
+const { width } = Dimensions.get('window');
+const GRID_ITEM_WIDTH = (width - 48) / 2; // 16 padding on sides + 16 gap
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -22,9 +25,11 @@ export default function HomeScreen() {
   const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   
-  // Sort State
+  // Sort & View State
   const [sortOption, setSortOption] = useState('Alphabetical');
+  const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('ASC');
   const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
 
   useEffect(() => {
     if (!searchQuery && !params.q) {
@@ -34,7 +39,9 @@ export default function HomeScreen() {
 
   // Reset sort when tab changes
   useEffect(() => {
-    setSortOption(activeTab === 'songs' && sortOption === 'Track Count' ? 'Alphabetical' : 'Alphabetical');
+    // Default sorts for tabs
+    setSortOption('Alphabetical');
+    setSortOrder('ASC');
   }, [activeTab]);
 
   // Selection Mode State
@@ -191,11 +198,9 @@ export default function HomeScreen() {
          songs.sort((a, b) => {
            const indexA = history.indexOf(a.id);
            const indexB = history.indexOf(b.id);
-           // If both in history, lower index (earlier in list) is more recent? 
-           // Wait, history[0] is most recent.
            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-           if (indexA !== -1) return -1; // A is in history, B is not
-           if (indexB !== -1) return 1;  // B is in history, A is not
+           if (indexA !== -1) return -1; 
+           if (indexB !== -1) return 1;  
            return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
          });
        } else {
@@ -209,11 +214,22 @@ export default function HomeScreen() {
        }
     } else {
        // Artists
-       artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+       if (sortOption === 'Track Count') {
+         artists.sort((a, b) => b.tracks.length - a.tracks.length);
+       } else {
+         artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+       }
+    }
+
+    // Apply Sort Order (Reverse if DESC)
+    if (sortOrder === 'DESC') {
+      if (activeTab === 'songs') songs.reverse();
+      else if (activeTab === 'albums') albums.reverse();
+      else if (activeTab === 'artists') artists.reverse();
     }
 
     return { songs, artists, albums };
-  }, [library, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, history]);
+  }, [library, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, sortOrder, history]);
 
   const handleTrackPress = async (track: Track) => {
     if (currentTrack?.id === track.id) {
@@ -224,7 +240,53 @@ export default function HomeScreen() {
         : (searchQuery ? { type: 'search', title: `Search: ${searchQuery}`, searchQuery, favoritesOnly: showFavoritesOnly } : { type: 'all', title: 'All Songs', favoritesOnly: showFavoritesOnly });
       
       await playTrack(track, groupedLibrary.songs, origin.title, origin);
-      // Removed router.push('/player') to prevent auto-opening modal
+    }
+  };
+
+  const handlePlayAll = async () => {
+    if (activeTab === 'songs') {
+      if (groupedLibrary.songs.length === 0) return;
+      await playTrack(groupedLibrary.songs[0], groupedLibrary.songs, 'All Songs');
+    } else if (activeTab === 'artists' || activeTab === 'albums') {
+      const groups = activeTab === 'artists' ? groupedLibrary.artists : groupedLibrary.albums;
+      if (groups.length === 0) return;
+      const allTracks = groups.flatMap(g => g.tracks);
+      await playTrack(allTracks[0], allTracks, `All ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`);
+    } else if (activeTab === 'playlists') {
+      if (playlists.length === 0) return;
+      const tracks = await import('../utils/database').then(m => m.getPlaylistTracks(playlists[0].id));
+      if (tracks.length > 0) {
+        await playTrack(tracks[0], tracks, playlists[0].title);
+      }
+    }
+  };
+
+  const handleShuffleAll = async () => {
+    if (activeTab === 'songs') {
+      if (groupedLibrary.songs.length === 0) return;
+      const randomIndex = Math.floor(Math.random() * groupedLibrary.songs.length);
+      await playTrack(groupedLibrary.songs[randomIndex], groupedLibrary.songs, 'Shuffle Songs');
+    } else if (activeTab === 'artists' || activeTab === 'albums') {
+      const groups = [...(activeTab === 'artists' ? groupedLibrary.artists : groupedLibrary.albums)];
+      if (groups.length === 0) return;
+      
+      // Shuffle the groups themselves (Artists or Albums)
+      for (let i = groups.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [groups[i], groups[j]] = [groups[j], groups[i]];
+      }
+      
+      const shuffledTracks = groups.flatMap(g => g.tracks);
+      await playTrack(shuffledTracks[0], shuffledTracks, `Shuffle ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`);
+    } else if (activeTab === 'playlists') {
+      if (playlists.length === 0) return;
+      const randomIndex = Math.floor(Math.random() * playlists.length);
+      const playlist = playlists[randomIndex];
+      const tracks = await import('../utils/database').then(m => m.getPlaylistTracks(playlist.id));
+      if (tracks.length > 0) {
+        const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+        await playTrack(shuffled[0], shuffled, playlist.title);
+      }
     }
   };
 
@@ -254,14 +316,18 @@ export default function HomeScreen() {
     });
   };
 
+  // --- RENDER FUNCTIONS ---
+
   const renderPlaylistItem = ({ item }: { item: any }) => {
+    // Playlist only supports List for now, but we can respect Condensed
+    const isCondensed = viewMode === 'condensed';
     return (
-      <TouchableOpacity style={styles.groupItem} onPress={() => handlePlaylistItemPress(item)}>
-        <View style={styles.groupIcon}>
-          <Ionicons name="list" size={24} color={themeColor} />
+      <TouchableOpacity style={[styles.groupItem, isCondensed && styles.groupItemCondensed]} onPress={() => handlePlaylistItemPress(item)}>
+        <View style={[styles.groupIcon, isCondensed && styles.groupIconCondensed]}>
+          <Ionicons name="list" size={isCondensed ? 20 : 24} color={themeColor} />
         </View>
         <View style={styles.info}>
-          <Text style={styles.groupTitle}>{item.title}</Text>
+          <Text style={styles.groupTitle} numberOfLines={1}>{item.title}</Text>
           <Text style={styles.groupSubtitle}>Playlist</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color="#666" />
@@ -273,39 +339,85 @@ export default function HomeScreen() {
     const isCurrent = currentTrack?.id === item.id;
     const isSelected = selectedTracks.includes(item.id);
 
+    if (viewMode === 'grid') {
+      return (
+        <TouchableOpacity 
+          style={[styles.gridItem, isCurrent && { borderColor: themeColor, borderWidth: 1 }]} 
+          onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
+          onLongPress={() => toggleSelectTrack(item.id)}
+        >
+          <View style={styles.gridArtworkContainer}>
+            {item.artwork ? (
+              <Image source={{ uri: item.artwork }} style={styles.gridArtwork} />
+            ) : (
+              <View style={[styles.gridArtwork, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }]}>
+                <Ionicons name="musical-note" size={40} color="#555" />
+              </View>
+            )}
+            {isSelected && (
+              <View style={styles.selectedOverlay}>
+                <Ionicons name="checkmark-circle" size={32} color={themeColor} />
+              </View>
+            )}
+            {isCurrent && isPlaying && (
+              <View style={[styles.selectedOverlay, { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
+                 <Ionicons name="play" size={32} color={themeColor} />
+              </View>
+            )}
+          </View>
+          <Text style={[styles.gridTitle, isCurrent && { color: themeColor }]} numberOfLines={1}>{item.title}</Text>
+          <Text style={styles.gridSubtitle} numberOfLines={1}>{item.artist}</Text>
+        </TouchableOpacity>
+      );
+    }
+
+    const isCondensed = viewMode === 'condensed';
     return (
-      <View style={[styles.item, isCurrent && [styles.activeItem, { borderLeftColor: themeColor }], isSelected && [styles.selectedItem, { borderColor: themeColor, backgroundColor: `${themeColor}1A` }]]}>
+      <View style={[
+        styles.item, 
+        isCondensed && styles.itemCondensed,
+        isCurrent && [styles.activeItem, { borderLeftColor: themeColor }], 
+        isSelected && [styles.selectedItem, { borderColor: themeColor, backgroundColor: `${themeColor}1A` }]
+      ]}>
         <TouchableOpacity 
           style={styles.itemContent} 
           onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
           onLongPress={() => toggleSelectTrack(item.id)}
         >
-          <View style={styles.artworkPlaceholder}>
-             {item.artwork ? (
-               <Image source={{ uri: item.artwork }} style={styles.artwork} key={item.artwork} />
-             ) : (
-               <Ionicons name="musical-note" size={24} color="#555" />
-             )}
-             {isSelected && (
-               <View style={styles.selectedOverlay}>
-                 <Ionicons name="checkmark-circle" size={24} color={themeColor} />
-               </View>
-             )}
-          </View>
+          {!isCondensed && (
+            <View style={styles.artworkPlaceholder}>
+              {item.artwork ? (
+                <Image source={{ uri: item.artwork }} style={styles.artwork} key={item.artwork} />
+              ) : (
+                <Ionicons name="musical-note" size={24} color="#555" />
+              )}
+              {isSelected && (
+                <View style={styles.selectedOverlay}>
+                  <Ionicons name="checkmark-circle" size={24} color={themeColor} />
+                </View>
+              )}
+            </View>
+          )}
+          {isCondensed && isSelected && (
+             <Ionicons name="checkmark-circle" size={20} color={themeColor} style={{ marginRight: 10 }} />
+          )}
+
           <View style={styles.info}>
-            <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
-            <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">
-              {item.artist} • {formatDuration(item.duration)}
+            <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1}>{item.title}</Text>
+            <Text style={styles.artist} numberOfLines={1}>
+              {item.artist} {isCondensed ? `• ${formatDuration(item.duration)}` : `• ${formatDuration(item.duration)}`}
             </Text>
           </View>
         </TouchableOpacity>
         
         <View style={styles.sideButtons}>
-          <TouchableOpacity style={styles.sideButton} onPress={() => handleSingleTrackAction(item)}>
-            <Ionicons name="ellipsis-vertical" size={20} color="#888" />
-          </TouchableOpacity>
+          {!isCondensed && (
+             <TouchableOpacity style={styles.sideButton} onPress={() => handleSingleTrackAction(item)}>
+               <Ionicons name="ellipsis-vertical" size={20} color="#888" />
+             </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.sideButton} onPress={() => handleSideButtonPress(item)}>
-            <Ionicons name={isCurrent && isPlaying ? "pause-circle" : "play-circle-outline"} size={30} color={isCurrent ? themeColor : "#888"} />
+            <Ionicons name={isCurrent && isPlaying ? "pause-circle" : "play-circle-outline"} size={isCondensed ? 24 : 30} color={isCurrent ? themeColor : "#888"} />
           </TouchableOpacity>
         </View>
       </View>
@@ -316,17 +428,42 @@ export default function HomeScreen() {
     const coverArt = item.tracks.find(t => t.artwork)?.artwork;
     const subtitle = type === 'album' ? (item.tracks[0]?.artist || 'Unknown Artist') : `${item.tracks.length} songs`;
     
+    if (viewMode === 'grid') {
+      return (
+        <TouchableOpacity 
+          style={styles.gridItem}
+          onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}
+        >
+          <View style={styles.gridArtworkContainer}>
+            {coverArt ? (
+              <Image source={{ uri: coverArt }} style={styles.gridArtwork} />
+            ) : (
+              <View style={[styles.gridArtwork, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }]}>
+                <Ionicons name={type === 'artist' ? 'person' : 'disc'} size={40} color="#555" />
+              </View>
+            )}
+          </View>
+          <Text style={styles.gridTitle} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.gridSubtitle} numberOfLines={1}>{subtitle}</Text>
+        </TouchableOpacity>
+      );
+    }
+
+    const isCondensed = viewMode === 'condensed';
     return (
-      <TouchableOpacity style={styles.groupItem} onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}>
-        <View style={styles.groupIcon}>
+      <TouchableOpacity 
+        style={[styles.groupItem, isCondensed && styles.groupItemCondensed]} 
+        onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}
+      >
+        <View style={[styles.groupIcon, isCondensed && styles.groupIconCondensed]}>
           {coverArt ? (
             <Image source={{ uri: coverArt }} style={styles.artwork} key={coverArt} />
           ) : (
-            <Ionicons name={type === 'artist' ? 'person' : 'disc'} size={24} color="#fff" />
+            <Ionicons name={type === 'artist' ? 'person' : 'disc'} size={isCondensed ? 20 : 24} color="#fff" />
           )}
         </View>
         <View style={styles.info}>
-          <Text style={styles.groupTitle} numberOfLines={1} ellipsizeMode="middle">{item.name}</Text>
+          <Text style={styles.groupTitle} numberOfLines={1}>{item.name}</Text>
           <Text style={styles.groupSubtitle}>{subtitle}</Text>
         </View>
         <Ionicons name="chevron-forward" size={20} color="#666" />
@@ -339,8 +476,12 @@ export default function HomeScreen() {
   const getSortOptions = () => {
       if (activeTab === 'songs') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Recently Played', value: 'Recently Played' }];
       if (activeTab === 'albums') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Track Count', value: 'Track Count' }];
+      if (activeTab === 'artists') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Track Count', value: 'Track Count' }];
       return [{ label: 'Alphabetical', value: 'Alphabetical' }];
   };
+
+  // Only allow ViewMode toggle in main tabs, not search
+  const showViewOptions = !isSearching && activeTab !== 'playlists';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -392,9 +533,16 @@ export default function HomeScreen() {
             ))}
           </View>
           {/* Sort Bar */}
-          {activeTab !== 'playlists' && (
-              <SortBar currentSort={sortOption} onPress={() => setSortModalVisible(true)} />
-          )}
+          <SortBar 
+            currentSort={sortOption} 
+            onPress={() => setSortModalVisible(true)} 
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            sortOrder={sortOrder}
+            onToggleSortOrder={() => setSortOrder(prev => prev === 'ASC' ? 'DESC' : 'ASC')}
+            onPlayAll={handlePlayAll}
+            onShuffleAll={handleShuffleAll}
+          />
         </View>
       )}
       
@@ -417,16 +565,45 @@ export default function HomeScreen() {
         ) : (
           <>
             {activeTab === 'songs' && (
-              <FlatList data={groupedLibrary.songs} renderItem={renderSongItem} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
+              <FlatList 
+                key={`songs-${viewMode}`}
+                data={groupedLibrary.songs} 
+                renderItem={renderSongItem} 
+                keyExtractor={item => item.id} 
+                contentContainerStyle={styles.listContent}
+                numColumns={viewMode === 'grid' ? 2 : 1}
+                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
+              />
             )}
             {activeTab === 'artists' && (
-              <FlatList data={groupedLibrary.artists} renderItem={({ item }) => renderGroupItem({ item, type: 'artist' })} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
+              <FlatList 
+                key={`artists-${viewMode}`}
+                data={groupedLibrary.artists} 
+                renderItem={({ item }) => renderGroupItem({ item, type: 'artist' })} 
+                keyExtractor={item => item.id} 
+                contentContainerStyle={styles.listContent}
+                numColumns={viewMode === 'grid' ? 2 : 1}
+                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
+              />
             )}
             {activeTab === 'albums' && (
-              <FlatList data={groupedLibrary.albums} renderItem={({ item }) => renderGroupItem({ item, type: 'album' })} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
+              <FlatList 
+                key={`albums-${viewMode}`}
+                data={groupedLibrary.albums} 
+                renderItem={({ item }) => renderGroupItem({ item, type: 'album' })} 
+                keyExtractor={item => item.id} 
+                contentContainerStyle={styles.listContent}
+                numColumns={viewMode === 'grid' ? 2 : 1}
+                columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between' } : undefined}
+              />
             )}
             {activeTab === 'playlists' && (
-              <FlatList data={playlists} renderItem={renderPlaylistItem} keyExtractor={item => item.id} contentContainerStyle={styles.listContent} />
+              <FlatList 
+                data={playlists} 
+                renderItem={renderPlaylistItem} 
+                keyExtractor={item => item.id} 
+                contentContainerStyle={styles.listContent} 
+              />
             )}
           </>
         )}
@@ -484,7 +661,10 @@ const styles = StyleSheet.create({
   activeTabText: { color: '#fff' },
   listContent: { paddingHorizontal: 16, paddingBottom: 100 },
   sectionHeader: { fontSize: 14, fontWeight: 'bold', textTransform: 'uppercase', marginTop: 20, marginBottom: 10, letterSpacing: 1 },
+  
+  // List View Styles
   item: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, padding: 8, borderRadius: 12, backgroundColor: '#1E1E1E' },
+  itemCondensed: { marginBottom: 6, padding: 4, borderRadius: 8, height: 50 },
   activeItem: { backgroundColor: '#282828', borderLeftWidth: 3 },
   selectedItem: { borderWidth: 1 },
   itemContent: { flex: 1, flexDirection: 'row', alignItems: 'center' },
@@ -493,14 +673,25 @@ const styles = StyleSheet.create({
   artwork: { width: '100%', height: '100%' },
   info: { flex: 1, marginLeft: 15 },
   title: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  activeText: {},
   artist: { color: '#aaa', fontSize: 14, marginTop: 2 },
   sideButtons: { flexDirection: 'row', alignItems: 'center' },
   sideButton: { padding: 10 },
+  
+  // Group List Styles
   groupItem: { flexDirection: 'row', alignItems: 'center', padding: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
+  groupItemCondensed: { padding: 8, borderBottomWidth: 0, marginBottom: 4, backgroundColor: '#1E1E1E', borderRadius: 8 },
   groupIcon: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', marginRight: 15, overflow: 'hidden' },
+  groupIconCondensed: { width: 30, height: 30, borderRadius: 15, marginRight: 10 },
   groupTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   groupSubtitle: { color: '#888', fontSize: 14 },
+
+  // Grid View Styles
+  gridItem: { width: GRID_ITEM_WIDTH, marginBottom: 16, backgroundColor: '#1E1E1E', borderRadius: 12, padding: 10 },
+  gridArtworkContainer: { width: '100%', aspectRatio: 1, borderRadius: 8, overflow: 'hidden', marginBottom: 8, backgroundColor: '#333' },
+  gridArtwork: { width: '100%', height: '100%' },
+  gridTitle: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  gridSubtitle: { color: '#888', fontSize: 12, marginTop: 2 },
+
   emptyContainer: { alignItems: 'center', marginTop: 50 },
   emptyText: { color: '#888', fontSize: 16 },
   miniPlayer: { position: 'absolute', bottom: 20, left: 10, right: 10, backgroundColor: '#282828', padding: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', elevation: 8 },
