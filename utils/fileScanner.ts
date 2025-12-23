@@ -143,7 +143,7 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
                 }
             }
         } catch (e) {
-            // Ignore folder scan errors
+            await logToFile(`Error scanning folder for artwork fallback: ${e}`, 'WARN');
         }
     }
     
@@ -187,9 +187,13 @@ export const discoverAudioFiles = async (folderUri: string): Promise<string[]> =
           } else if (AUDIO_EXTENSIONS.some(ext => lowerName.endsWith(ext))) {
             audioFiles.push(fullUri);
           }
-        } catch (e) {}
+        } catch (e) {
+          await logToFile(`Error accessing file ${fullUri}: ${e}`, 'WARN');
+        }
       }
-    } catch (e) {}
+    } catch (e) {
+      await logToFile(`Error walking directory ${uri}: ${e}`, 'WARN');
+    }
   };
 
   await walk(folderUri);
@@ -217,7 +221,9 @@ export const scanFolder = async (folderUri: string, onTrackProcessed?: (track: T
         if (lrcInfo.exists) {
           lrcContent = await LegacyFileSystem.readAsStringAsync(lrcUri);
         }
-      } catch (e) {}
+      } catch (e) {
+        await logToFile(`Error reading LRC in scanFolder: ${e}`, 'WARN');
+      }
 
       const existingTrack = await getTrackById(fullUri);
       let track: Track;

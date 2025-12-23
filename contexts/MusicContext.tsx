@@ -124,7 +124,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
          const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
          if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-      } catch(e) {}
+      } catch(e) {
+         await logToFile(`Error reading LRC for ${fileName}: ${e}`, 'WARN');
+      }
 
       const updatedTrack: Track = {
         ...track,
@@ -178,7 +180,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           try {
              const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
              if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-          } catch(e) {}
+          } catch(e) {
+             await logToFile(`Error reading LRC for ${fileName}: ${e}`, 'WARN');
+          }
 
           const updatedTrack: Track = {
             ...track,
@@ -240,7 +244,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                  updates.push(updated);
              }
           }
-        } catch (e) {}
+        } catch (e) {
+           await logToFile(`Error rescanning lyrics for ${track.title}: ${e}`, 'WARN');
+        }
         
         processed++;
         if (processed % 50 === 0) setScanProgress(prev => ({ ...prev, current: processed }));
@@ -492,7 +498,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
              await TrackPlayer.play(); 
           }
         } catch (e) {
-           console.error("Verification failed", e);
+           await logToFile(`PlayTrack: Post-play verification failed: ${e}`, 'WARN');
         }
       }, 500);
 

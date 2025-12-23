@@ -14,6 +14,7 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
     if (!dirInfo.exists) {
       await logToFile(`Music directory does not exist, creating: ${internalMusicDir}`);
       await FileSystem.makeDirectoryAsync(internalMusicDir, { intermediates: true });
+      await FileSystem.writeAsStringAsync(internalMusicDir + 'PLACE_MUSIC_HERE.txt', 'Place your audio files (.mp3, .m4a, .wav, .flac) in this folder to sync them with the library.');
     }
 
     // Phase 1: Discovery
@@ -70,7 +71,9 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
             if (lrcInfo.exists) {
               lrcContent = await FileSystem.readAsStringAsync(lrcUri);
             }
-          } catch (e) {}
+          } catch (e) {
+            await logToFile(`Error reading LRC for ${fileName}: ${e}`, 'WARN');
+          }
 
           const newTrack: Track = {
             id: fullUri,
