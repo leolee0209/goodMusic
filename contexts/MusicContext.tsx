@@ -290,53 +290,52 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     playerReadyPromise.current = (async () => {
         try {
-            await logToFile('Setup: Initializing TrackPlayer native service...');
+            await logToFile('Setup: Starting player initialization sequence...');
             
+            let isInitialized = false;
             try {
-                const serviceRunning = await TrackPlayer.isServiceRunning().catch(() => false);
-                if (!serviceRunning) {
-                    await TrackPlayer.setupPlayer({
-                        waitForBuffer: true,
-                        minBuffer: 0.5,
-                        maxBuffer: 3,
-                    });
-                    await logToFile('Setup: TrackPlayer.setupPlayer() successful.');
-                } else {
-                    await logToFile('Setup: TrackPlayer service is already running.');
-                }
-            } catch (e: any) {
-                // Check for "already initialized" errors which are safe to ignore
-                const errorStr = String(e);
-                if (errorStr.includes('already initialized') || errorStr.includes('already_initialized')) {
-                    await logToFile('Setup: TrackPlayer was already initialized.');
-                } else {
-                    throw e;
-                }
+                const state = await TrackPlayer.getState();
+                isInitialized = state !== State.None;
+                await logToFile(`Setup: Current player state is ${state}. Initialized: ${isInitialized}`);
+            } catch (e) {
+                await logToFile(`Setup: Player not initialized yet (verified by error: ${e})`);
+            }
+
+            if (!isInitialized) {
+                await logToFile('Setup: Calling TrackPlayer.setupPlayer()...');
+                await TrackPlayer.setupPlayer();
+                await logToFile('Setup: TrackPlayer.setupPlayer() call returned.');
+                
+                // Small delay to ensure native side is fully ready
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
             
-            await TrackPlayer.updateOptions({
-              capabilities: [
-                Capability.Play,
-                Capability.Pause,
-                Capability.SkipToNext,
-                Capability.SkipToPrevious,
-                Capability.SeekTo,
-              ],
-              compactCapabilities: [
-                Capability.Play,
-                Capability.Pause,
-                Capability.SkipToNext,
-              ],
-              progressUpdateEventInterval: 1,
-              android: {
-                  appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification
-              }
-            });
-            await logToFile('Setup: Capabilities updated.');
+            try {
+                await TrackPlayer.updateOptions({
+                  capabilities: [
+                    Capability.Play,
+                    Capability.Pause,
+                    Capability.SkipToNext,
+                    Capability.SkipToPrevious,
+                    Capability.SeekTo,
+                  ],
+                  compactCapabilities: [
+                    Capability.Play,
+                    Capability.Pause,
+                    Capability.SkipToNext,
+                  ],
+                  progressUpdateEventInterval: 1,
+                  android: {
+                      appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification
+                  }
+                });
+                await logToFile('Setup: Capabilities updated.');
+            } catch (optErr) {
+                await logToFile(`Setup: updateOptions failed (non-critical): ${optErr}`, 'WARN');
+            }
 
-            // Verify initialization by calling a simple method
-            const state = await TrackPlayer.getState();
-            await logToFile(`Setup: Complete. Player State: ${state}`);
+            const finalState = await TrackPlayer.getState();
+            await logToFile(`Setup: Complete. Final Player State: ${finalState}`);
           } catch (e) {
             await logToFile(`Setup: CRITICAL FAILURE: ${e}`, 'ERROR');
             playerReadyPromise.current = null; 
