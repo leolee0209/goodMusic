@@ -52,6 +52,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const updateQueue = useRef<Promise<void>>(Promise.resolve());
   const playerReadyPromise = useRef<Promise<void> | null>(null);
+  const isPlayerInitialized = useRef(false);
 
   // Helper to resolve artwork URIs (handles relative paths from DB)
   const resolveArtworkUri = (uri: string | null | undefined) => {
@@ -64,17 +65,25 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!uri) return uri;
       const absolute = toAbsoluteUri(uri);
       let result = absolute;
+      // If it's a raw path like /storage/..., add file://
       if (result.startsWith('/') && !result.startsWith('file://')) {
           result = `file://${result}`;
+      }
+      
+      // Log if the conversion seems to have failed to produce a valid schema
+      if (!result.startsWith('file://') && !result.startsWith('http')) {
+          logToFile(`Warning: ensureFileUri might have failed. Input: ${uri} -> Absolute: ${absolute} -> Result: ${result}`, 'WARN');
       }
       return result;
   };
 
   // Helper to serialize Track to RNTP Track
   const toRntpTrack = (track: Track) => {
+    const finalUrl = ensureFileUri(track.uri);
+
     const rntpTrack = {
       id: toRelativePath(track.id), // Ensure ID is stable
-      url: ensureFileUri(track.uri),
+      url: finalUrl,
       title: track.title,
       artist: track.artist,
       album: track.album || 'Unknown Album',
@@ -82,7 +91,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       duration: track.duration ? track.duration / 1000 : 0, 
       original: track 
     };
-    logToFile(`Mapping track for RNTP: ${track.title} | URL: ${rntpTrack.url} | Dur: ${rntpTrack.duration}`);
+
+    // Explicitly check for relative path issues
+    if (finalUrl.startsWith('doc://') || finalUrl.startsWith('cache://')) {
+        logToFile(`CRITICAL: Relative path passed to player! Track: ${track.title} | URL: ${finalUrl}`, 'ERROR');
+    } else {
+        logToFile(`Mapping track for RNTP: ${track.title} | URL: ${finalUrl} | Dur: ${rntpTrack.duration}`);
+    }
+
     return rntpTrack;
   };
 
@@ -123,15 +139,16 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
          if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
       } catch(e) {}
 
+      // Keep existing duration/title/artist if the new one is undefined/unknown and the old one was valid
       const updatedTrack: Track = {
         ...track,
-        title: metadata.title,
-        artist: metadata.artist,
-        album: metadata.album,
-        artwork: resolveArtworkUri(metadata.artwork),
-        lrc: lrcContent,
-        trackNumber: metadata.trackNumber,
-        duration: metadata.duration
+        title: metadata.title !== 'Unknown Title' ? metadata.title : track.title,
+        artist: metadata.artist !== 'Unknown Artist' ? metadata.artist : track.artist,
+        album: metadata.album !== 'Unknown Album' ? metadata.album : track.album,
+        artwork: metadata.artwork ? resolveArtworkUri(metadata.artwork) : track.artwork,
+        lrc: lrcContent !== undefined ? lrcContent : track.lrc,
+        trackNumber: metadata.trackNumber ?? track.trackNumber,
+        duration: (metadata.duration && metadata.duration > 0) ? metadata.duration : track.duration
       };
 
       await insertTracks([updatedTrack]);
@@ -179,13 +196,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           const updatedTrack: Track = {
             ...track,
-            title: metadata.title,
-            artist: metadata.artist,
-            album: metadata.album,
-            artwork: resolveArtworkUri(metadata.artwork),
-            lrc: lrcContent,
-            trackNumber: metadata.trackNumber,
-            duration: metadata.duration
+            title: metadata.title !== 'Unknown Title' ? metadata.title : track.title,
+            artist: metadata.artist !== 'Unknown Artist' ? metadata.artist : track.artist,
+            album: metadata.album !== 'Unknown Album' ? metadata.album : track.album,
+            artwork: metadata.artwork ? resolveArtworkUri(metadata.artwork) : track.artwork,
+            lrc: lrcContent !== undefined ? lrcContent : track.lrc,
+            trackNumber: metadata.trackNumber ?? track.trackNumber,
+            duration: (metadata.duration && metadata.duration > 0) ? metadata.duration : track.duration
           };
           
           updates.push(updatedTrack);
@@ -277,61 +294,91 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const setupPlayer = async () => {
+    // If we've already successfully initialized in this JS session, return early.
+    if (isPlayerInitialized.current) return;
+    
+    // Use a lock to prevent concurrent setup calls
     if (playerReadyPromise.current) return playerReadyPromise.current;
 
     playerReadyPromise.current = (async () => {
         try {
             await logToFile('Setup: Initializing TrackPlayer native service...');
             
+            let isSetup = false;
             try {
+                // Check if service is already running (native side)
                 const serviceRunning = await TrackPlayer.isServiceRunning().catch(() => false);
+                
                 if (!serviceRunning) {
+                    await logToFile('Setup: Service not running. Calling setupPlayer...');
                     await TrackPlayer.setupPlayer({
                         waitForBuffer: true,
                         minBuffer: 0.5,
                         maxBuffer: 3,
                     });
+                    isSetup = true;
                     await logToFile('Setup: TrackPlayer.setupPlayer() successful.');
                 } else {
                     await logToFile('Setup: TrackPlayer service is already running.');
+                    isSetup = true;
                 }
             } catch (e: any) {
-                // Check for "already initialized" errors which are safe to ignore
                 const errorStr = String(e);
-                if (errorStr.includes('already initialized') || errorStr.includes('already_initialized')) {
-                    await logToFile('Setup: TrackPlayer was already initialized.');
+                // Handle "already initialized" specifically
+                if (errorStr.includes('already initialized') || errorStr.includes('The player has already been initialized')) {
+                    await logToFile('Setup: TrackPlayer was already initialized (caught error).');
+                    isSetup = true;
                 } else {
+                    await logToFile(`Setup: setupPlayer failed with error: ${e}`, 'ERROR');
                     throw e;
                 }
             }
             
-            await TrackPlayer.updateOptions({
-              capabilities: [
-                Capability.Play,
-                Capability.Pause,
-                Capability.SkipToNext,
-                Capability.SkipToPrevious,
-                Capability.SeekTo,
-              ],
-              compactCapabilities: [
-                Capability.Play,
-                Capability.Pause,
-                Capability.SkipToNext,
-              ],
-              progressUpdateEventInterval: 1,
-              android: {
-                  appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification
-              }
-            });
-            await logToFile('Setup: Capabilities updated.');
+            if (isSetup) {
+                await TrackPlayer.updateOptions({
+                  capabilities: [
+                    Capability.Play,
+                    Capability.Pause,
+                    Capability.SkipToNext,
+                    Capability.SkipToPrevious,
+                    Capability.SeekTo,
+                  ],
+                  compactCapabilities: [
+                    Capability.Play,
+                    Capability.Pause,
+                    Capability.SkipToNext,
+                  ],
+                  progressUpdateEventInterval: 1,
+                  android: {
+                      appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification
+                  }
+                });
+                
+                // Add Listeners for Debugging
+                TrackPlayer.addEventListener(Event.PlaybackError, (e) => {
+                    logToFile(`Native Player Error: ${e.code} - ${e.message}`, 'ERROR');
+                });
+                TrackPlayer.addEventListener(Event.PlaybackState, (e) => {
+                    logToFile(`Native Player State Change: ${e.state}`);
+                });
+                
+                await logToFile('Setup: Capabilities updated and listeners attached.');
 
-            // Verify initialization by calling a simple method
-            const state = await TrackPlayer.getState();
-            await logToFile(`Setup: Complete. Player State: ${state}`);
+                // Verify initialization
+                const state = await TrackPlayer.getState();
+                await logToFile(`Setup: Complete. Player State: ${state}`);
+                isPlayerInitialized.current = true;
+            }
           } catch (e) {
             await logToFile(`Setup: CRITICAL FAILURE: ${e}`, 'ERROR');
             playerReadyPromise.current = null; 
+            isPlayerInitialized.current = false;
             throw e;
+          } finally {
+            // If we succeeded, keep the promise resolved. If failed, we cleared it above.
+            // But actually we want to clear the promise ref so future calls can retry if it failed.
+            // If it succeeded, we can clear it too because isPlayerInitialized handles the optimization.
+             playerReadyPromise.current = null;
           }
     })();
 

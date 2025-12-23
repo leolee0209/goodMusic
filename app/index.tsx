@@ -20,14 +20,14 @@ export default function HomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ q?: string; f?: string }>();
   const { playTrack, currentTrack, isPlaying, togglePlayPause, favorites, library, playlists, createPlaylist, addToPlaylist, removeTrack, history } = useMusic();
-  const { defaultTab, themeColor } = useSettings();
+  const { defaultTab, themeColor, sortPreferences, setSortPreference } = useSettings();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   
   // Sort & View State
-  const [sortOption, setSortOption] = useState('Alphabetical');
-  const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('ASC');
+  const sortOption = sortPreferences[activeTab]?.option || 'Alphabetical';
+  const sortOrder = sortPreferences[activeTab]?.order || 'ASC';
   const [sortModalVisible, setSortModalVisible] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
 
@@ -36,13 +36,6 @@ export default function HomeScreen() {
         setActiveTab(defaultTab);
     }
   }, [defaultTab]);
-
-  // Reset sort when tab changes
-  useEffect(() => {
-    // Default sorts for tabs
-    setSortOption('Alphabetical');
-    setSortOrder('ASC');
-  }, [activeTab]);
 
   // Selection Mode State
   const [selectedTracks, setSelectedTracks] = useState<string[]>([]);
@@ -539,7 +532,7 @@ export default function HomeScreen() {
             viewMode={viewMode}
             onViewModeChange={setViewMode}
             sortOrder={sortOrder}
-            onToggleSortOrder={() => setSortOrder(prev => prev === 'ASC' ? 'DESC' : 'ASC')}
+            onToggleSortOrder={() => setSortPreference(activeTab, sortOption, sortOrder === 'ASC' ? 'DESC' : 'ASC')}
             onPlayAll={handlePlayAll}
             onShuffleAll={handleShuffleAll}
           />
@@ -640,7 +633,7 @@ export default function HomeScreen() {
         onClose={() => setSortModalVisible(false)}
         options={getSortOptions()}
         currentValue={sortOption}
-        onSelect={setSortOption}
+        onSelect={(option) => setSortPreference(activeTab, option, sortOrder)}
       />
     </SafeAreaView>
   );

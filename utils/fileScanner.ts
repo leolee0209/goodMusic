@@ -60,6 +60,13 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
     }
 
     // Step 2: Read the determined length
+    const fileInfo = await FileSystem.getInfoAsync(uri);
+    const fileSize = fileInfo.exists ? fileInfo.size : undefined;
+    
+    if (!fileSize) {
+        await logToFile(`Warning: Could not determine file size for ${fileName}. Duration calculation might be inaccurate.`, 'WARN');
+    }
+
     const fileContent = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
       length: readLength,
@@ -80,8 +87,9 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
     const metadata = await mm.parseBuffer(buffer, mimeType, { 
       duration: true, 
       skipCovers: false, 
-      skipPostHeaders: true 
-    });
+      skipPostHeaders: true,
+      fileSize: fileSize 
+    } as any);
     
     const artist = metadata.common.artist || 'Unknown Artist';
     const album = metadata.common.album || 'Unknown Album';
@@ -145,7 +153,7 @@ export const parseMetadata = async (uri: string, fileName: string, albumArtCache
         }
     }
     
-    await logToFile(`Parsed ${fileName}: ${formatLabel} | ${title} - ${artist} | Dur: ${duration}ms | Art: ${!!artworkUri} | Read: ${Math.round(readLength/1024)}KB`);
+    await logToFile(`Parsed ${fileName}: ${formatLabel} | ${title} - ${artist} | Dur: ${duration}ms | Art: ${!!artworkUri} | Read: ${Math.round(readLength/1024)}KB | Size: ${fileSize}`);
 
     return {
       title,
