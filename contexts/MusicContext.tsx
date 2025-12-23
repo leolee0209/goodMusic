@@ -45,8 +45,17 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [optimisticTrack, setOptimisticTrack] = useState<Track | null>(null);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+
+  // Monitor playing state to clear transitioning
+  useEffect(() => {
+    if (playing && isTransitioning) {
+      setIsTransitioning(false);
+      setOptimisticTrack(null);
+    }
+  }, [playing, isTransitioning]);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
@@ -407,6 +416,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       await logToFile(`PlayTrack: Request for "${track.title}" (ID: ${track.id})`);
       setOptimisticTrack(track);
+      setIsTransitioning(true);
 
       // Add to history
       addToHistory(track.id).then(async () => {
@@ -486,12 +496,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // 7. Post-Play Verification
       setTimeout(async () => {
-        setOptimisticTrack(null); // Clear optimistic state
+        // Fallback: Clear transitioning if it hasn't been cleared by playing state yet
+        setIsTransitioning(false);
+        setOptimisticTrack(null); 
+        
         try {
           const state = await TrackPlayer.getState();
           const queue = await TrackPlayer.getQueue();
           const current = await TrackPlayer.getActiveTrackIndex();
-          await logToFile(`PlayTrack: Verification (+500ms) - State: ${state}, QueueSize: ${queue.length}, CurrentIndex: ${current}`);
+          await logToFile(`PlayTrack: Verification (+1000ms) - State: ${state}, QueueSize: ${queue.length}, CurrentIndex: ${current}`);
           
           if (state === State.Error || state === State.None) {
              await logToFile('PlayTrack: Player seems stuck in Error/None state. Attempting recovery...', 'WARN');
@@ -500,10 +513,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         } catch (e) {
            await logToFile(`PlayTrack: Post-play verification failed: ${e}`, 'WARN');
         }
-      }, 500);
+      }, 1000);
 
     } catch (error) {
       setOptimisticTrack(null);
+      setIsTransitioning(false);
       await logToFile(`PlayTrack: CRITICAL ERROR: ${error}`, 'ERROR');
     }
   };
@@ -913,7 +927,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   return (
     <MusicContext.Provider value={{
       currentTrack: mappedCurrentTrack, 
-      isPlaying: playing || false, 
+      isPlaying: isTransitioning || playing || false, 
       positionMillis: position * 1000, 
       durationMillis: duration * 1000, 
       isShuffle, 

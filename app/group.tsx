@@ -14,12 +14,14 @@ import { SortBar } from '../components/SortBar';
 import { SortModal } from '../components/SortModal';
 import Animated, { useAnimatedScrollHandler, useSharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 
+const { width } = Dimensions.get('window');
+const GRID_ITEM_WIDTH = (width - 48) / 2; // 16 padding on sides + 16 gap
 const HERO_HEIGHT = 300;
 const HEADER_HEIGHT = 100; // Approximate height of top bar
 
 export default function GroupDetailScreen() {
   const router = useRouter();
-  const { themeColor } = useSettings();
+  const { themeColor, sortPreferences, setSortPreference } = useSettings();
   const { title, type, id, f } = useLocalSearchParams<{ title: string; type: 'artist' | 'album' | 'playlist'; id?: string; f?: string }>();
   const { library, playTrack, currentTrack, isPlaying, togglePlayPause, favorites, playlists, addToPlaylist, removeFromPlaylist, removeTrack, history } = useMusic();
   const [searchQuery, setSearchQuery] = useState('');
@@ -27,9 +29,10 @@ export default function GroupDetailScreen() {
   const [activeTab, setActiveTab] = useState<'songs' | 'albums'>(type === 'artist' ? 'albums' : 'songs');
   const [playlistTracks, setPlaylistTracks] = useState<Track[]>([]);
 
-  // Sort State
-  const [sortOption, setSortOption] = useState('Alphabetical');
-  const [sortOrder, setSortOrder] = useState<'ASC' | 'DESC'>('ASC');
+  // Sort & View State
+  const sortOption = sortPreferences[activeTab]?.option || 'Alphabetical';
+  const sortOrder = sortPreferences[activeTab]?.order || 'ASC';
+  const viewMode = sortPreferences[activeTab]?.viewMode || 'list';
   const [sortModalVisible, setSortModalVisible] = useState(false);
 
   // Selection Mode State
@@ -50,12 +53,6 @@ export default function GroupDetailScreen() {
   useEffect(() => {
     if (f === 'true') setShowFavoritesOnly(true);
   }, [f]);
-
-  // Reset sort when tab changes
-  useEffect(() => {
-    setSortOption('Alphabetical');
-    setSortOrder('ASC');
-  }, [activeTab]);
 
   const loadPlaylistTracks = async () => {
     if (type === 'playlist' && id) {
@@ -343,40 +340,86 @@ export default function GroupDetailScreen() {
     const isCurrent = currentTrack?.id === item.id;
     const isSelected = selectedTracks.includes(item.id);
 
+    if (viewMode === 'grid') {
+      return (
+        <TouchableOpacity 
+          style={[styles.gridItem, isCurrent && { borderColor: themeColor, borderWidth: 1 }]} 
+          onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
+          onLongPress={() => toggleSelectTrack(item.id)}
+        >
+          <View style={styles.gridArtworkContainer}>
+            {item.artwork ? (
+              <Image source={{ uri: item.artwork }} style={styles.gridArtwork} />
+            ) : (
+              <View style={[styles.gridArtwork, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }]}>
+                <Ionicons name="musical-note" size={40} color="#555" />
+              </View>
+            )}
+            {isSelected && (
+              <View style={styles.selectedOverlay}>
+                <Ionicons name="checkmark-circle" size={32} color={themeColor} />
+              </View>
+            )}
+            {isCurrent && isPlaying && (
+              <View style={[styles.selectedOverlay, { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
+                 <Ionicons name="play" size={32} color={themeColor} />
+              </View>
+            )}
+          </View>
+          <Text style={[styles.gridTitle, isCurrent && { color: themeColor }]} numberOfLines={1}>{item.title}</Text>
+          <Text style={styles.gridSubtitle} numberOfLines={1}>{item.artist}</Text>
+        </TouchableOpacity>
+      );
+    }
+
+    const isCondensed = viewMode === 'condensed';
     return (
-      <View style={[styles.item, isCurrent && [styles.activeItem, { borderLeftColor: themeColor }], isSelected && [styles.selectedItem, { borderColor: themeColor, backgroundColor: `${themeColor}1A` }]]}>
+      <View style={[
+        styles.item, 
+        isCondensed && styles.itemCondensed,
+        isCurrent && [styles.activeItem, { borderLeftColor: themeColor }], 
+        isSelected && [styles.selectedItem, { borderColor: themeColor, backgroundColor: `${themeColor}1A` }]
+      ]}>
         <TouchableOpacity 
           style={styles.itemContent} 
           onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
           onLongPress={() => toggleSelectTrack(item.id)}
         >
-          <View style={styles.artworkPlaceholder}>
-             {item.artwork ? (
-               <Image source={{ uri: item.artwork }} style={styles.artwork} key={item.artwork} />
-             ) : (
-               <Ionicons name="musical-note" size={24} color="#555" />
-             )}
-             {isSelected && (
-               <View style={styles.selectedOverlay}>
-                 <Ionicons name="checkmark-circle" size={24} color={themeColor} />
-               </View>
-             )}
-          </View>
+          {!isCondensed && (
+            <View style={styles.artworkPlaceholder}>
+              {item.artwork ? (
+                <Image source={{ uri: item.artwork }} style={styles.artwork} key={item.artwork} />
+              ) : (
+                <Ionicons name="musical-note" size={24} color="#555" />
+              )}
+              {isSelected && (
+                <View style={styles.selectedOverlay}>
+                  <Ionicons name="checkmark-circle" size={24} color={themeColor} />
+                </View>
+              )}
+            </View>
+          )}
+          {isCondensed && isSelected && (
+             <Ionicons name="checkmark-circle" size={20} color={themeColor} style={{ marginRight: 10 }} />
+          )}
+
           <View style={styles.info}>
             <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1} ellipsizeMode="middle">{item.title}</Text>
             <Text style={styles.artist} numberOfLines={1} ellipsizeMode="middle">
-              {item.artist} • {formatDuration(item.duration)}
+              {item.artist} {isCondensed ? `• ${formatDuration(item.duration)}` : `• ${formatDuration(item.duration)}`}
             </Text>
           </View>
         </TouchableOpacity>
         
         <View style={styles.sideButtons}>
-          <TouchableOpacity 
-            style={styles.sideButton}
-            onPress={() => handleSingleTrackAction(item)}
-          >
-            <Ionicons name="ellipsis-vertical" size={20} color="#888" />
-          </TouchableOpacity>
+          {!isCondensed && (
+            <TouchableOpacity 
+              style={styles.sideButton}
+              onPress={() => handleSingleTrackAction(item)}
+            >
+              <Ionicons name="ellipsis-vertical" size={20} color="#888" />
+            </TouchableOpacity>
+          )}
 
           <TouchableOpacity 
             style={styles.sideButton}
@@ -385,13 +428,13 @@ export default function GroupDetailScreen() {
             {isCurrent ? (
               <Ionicons 
                 name={isPlaying ? "pause-circle" : "play-circle"} 
-                size={30} 
+                size={isCondensed ? 24 : 30} 
                 color={themeColor} 
               />
             ) : (
               <Ionicons 
                 name="play-circle-outline" 
-                size={30} 
+                size={isCondensed ? 24 : 30} 
                 color="#888" 
               />
             )}
@@ -403,13 +446,39 @@ export default function GroupDetailScreen() {
 
   const renderAlbumItem = ({ item }: { item: { name: string, tracks: Track[] } }) => {
     const coverArt = item.tracks.find(t => t.artwork)?.artwork;
+    
+    if (viewMode === 'grid') {
+      return (
+        <TouchableOpacity 
+          style={styles.gridItem}
+          onPress={() => handleAlbumPress(item)}
+        >
+          <View style={styles.gridArtworkContainer}>
+            {coverArt ? (
+              <Image source={{ uri: coverArt }} style={styles.gridArtwork} />
+            ) : (
+              <View style={[styles.gridArtwork, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }]}>
+                <Ionicons name="disc" size={40} color="#555" />
+              </View>
+            )}
+          </View>
+          <Text style={styles.gridTitle} numberOfLines={1}>{item.name}</Text>
+          <Text style={styles.gridSubtitle} numberOfLines={1}>{item.tracks.length} songs</Text>
+        </TouchableOpacity>
+      );
+    }
+
+    const isCondensed = viewMode === 'condensed';
     return (
-      <TouchableOpacity style={styles.albumItem} onPress={() => handleAlbumPress(item)}>
-        <View style={styles.albumIcon}>
+      <TouchableOpacity 
+        style={[styles.albumItem, isCondensed && styles.albumItemCondensed]} 
+        onPress={() => handleAlbumPress(item)}
+      >
+        <View style={[styles.albumIcon, isCondensed && styles.albumIconCondensed]}>
           {coverArt ? (
             <Image source={{ uri: coverArt }} style={styles.artwork} key={coverArt} />
           ) : (
-            <Ionicons name="disc" size={24} color="#fff" />
+            <Ionicons name="disc" size={isCondensed ? 20 : 24} color="#fff" />
           )}
         </View>
         <View style={styles.info}>
@@ -525,14 +594,19 @@ export default function GroupDetailScreen() {
                 <SortBar 
                   currentSort={sortOption} 
                   onPress={() => setSortModalVisible(true)} 
+                  viewMode={viewMode}
+                  onViewModeChange={(mode) => setSortPreference(activeTab, sortOption, sortOrder, mode)}
                   sortOrder={sortOrder}
-                  onToggleSortOrder={() => setSortOrder(prev => prev === 'ASC' ? 'DESC' : 'ASC')}
+                  onToggleSortOrder={() => setSortPreference(activeTab, sortOption, sortOrder === 'ASC' ? 'DESC' : 'ASC', viewMode)}
                   onPlayAll={activeTab === 'songs' || type !== 'artist' ? handlePlayAll : undefined}
                   onShuffleAll={activeTab === 'songs' || type !== 'artist' ? handleShuffleAll : undefined}
                 />
              </View>
           ) : null
         }
+        key={viewMode} // Force re-render when viewMode changes to update numColumns
+        numColumns={viewMode === 'grid' ? 2 : 1}
+        columnWrapperStyle={viewMode === 'grid' ? { justifyContent: 'space-between', paddingHorizontal: 16 } : undefined}
       />
 
       {currentTrack && (
@@ -575,13 +649,14 @@ export default function GroupDetailScreen() {
         onClose={() => setSortModalVisible(false)}
         options={getSortOptions()}
         currentValue={sortOption}
-        onSelect={setSortOption}
+        onSelect={(option) => setSortPreference(activeTab, option, sortOrder, viewMode)}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // ... existing styles ...
   container: {
     flex: 1,
     backgroundColor: '#121212',
@@ -700,6 +775,11 @@ const styles = StyleSheet.create({
     padding: 8,
     backgroundColor: '#121212', // Critical for covering the hero
   },
+  itemCondensed: {
+    marginBottom: 0,
+    padding: 4,
+    height: 50,
+  },
   activeItem: {
     backgroundColor: '#282828',
     borderLeftWidth: 3,
@@ -762,6 +842,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#121212', // Critical
     paddingHorizontal: 16,
   },
+  albumItemCondensed: {
+    paddingVertical: 8,
+    borderBottomWidth: 0,
+    marginBottom: 4,
+    borderRadius: 8,
+  },
   albumIcon: {
     width: 50,
     height: 50,
@@ -772,6 +858,12 @@ const styles = StyleSheet.create({
     marginRight: 15,
     overflow: 'hidden',
   },
+  albumIconCondensed: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    marginRight: 10,
+  },
   albumTitle: {
     color: '#fff',
     fontSize: 16,
@@ -780,6 +872,36 @@ const styles = StyleSheet.create({
   albumSubtitle: {
     color: '#888',
     fontSize: 14,
+  },
+  // Grid Styles
+  gridItem: {
+    width: GRID_ITEM_WIDTH,
+    marginBottom: 16,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 12,
+    padding: 10,
+  },
+  gridArtworkContainer: {
+    width: '100%',
+    aspectRatio: 1,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 8,
+    backgroundColor: '#333',
+  },
+  gridArtwork: {
+    width: '100%',
+    height: '100%',
+  },
+  gridTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  gridSubtitle: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 2,
   },
   errorText: {
     color: '#fff',
