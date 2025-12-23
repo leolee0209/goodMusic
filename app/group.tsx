@@ -29,10 +29,44 @@ export default function GroupDetailScreen() {
   const [activeTab, setActiveTab] = useState<'songs' | 'albums'>(type === 'artist' ? 'albums' : 'songs');
   const [playlistTracks, setPlaylistTracks] = useState<Track[]>([]);
 
-  // Sort & View State
-  const sortOption = sortPreferences[activeTab]?.option || 'Alphabetical';
-  const sortOrder = sortPreferences[activeTab]?.order || 'ASC';
-  const viewMode = sortPreferences[activeTab]?.viewMode || 'list';
+  // Determine the correct sort scope
+  // For Artists, we distinguish between the "Songs" tab and "Albums" tab using a composite key if needed,
+  // or just use 'artist_detail' for both (simplest for now, or refine to 'artist_detail_songs' later if requested).
+  // Given the user wants separation from MAIN page, 'artist_detail' is sufficient to be separate from 'artists' tab.
+  // However, within Artist view, we have tabs. Let's map:
+  // type=artist -> activeTab=songs -> use 'artist_detail' (treating it as song list) ??
+  // Actually, 'artist_detail' usually implies the list of songs. 
+  // Let's stick to the requested scope keys: artist_detail, album_detail, playlist_detail.
+  // But wait, Artist view has TWO tabs: Songs and Albums. Sharing one sort pref for both might be weird (Sorting albums by 'Track Count' vs songs by 'Duration').
+  // The 'SortPreference' object has 'option', 'order', 'viewMode'.
+  // If we share 'artist_detail' for both tabs, switching tabs might show weird sort options.
+  // Ideally: 'artist_detail_songs' and 'artist_detail_albums'.
+  // But the previous Context update only added `artist_detail`. 
+  // Let's use `artist_detail` for the Artist's SONG list. The Album list in Artist view is less commonly sorted, 
+  // but if we need to sort it, we might collision.
+  // Let's look at `SettingsContext` update: I added `artist_detail`, `album_detail`, `playlist_detail`.
+  // I'll map:
+  // - Album View -> `album_detail`
+  // - Playlist View -> `playlist_detail`
+  // - Artist View -> if activeTab is 'songs' -> `artist_detail`. if activeTab is 'albums' -> we might need to fallback or share.
+  //   Let's use `artist_detail` for the songs. For albums tab in artist view, let's use `artist_detail` but maybe the options conflict?
+  //   Yes, 'Track Count' is valid for Albums, 'Recently Played' for songs.
+  //   Constraint: I can't easily change SettingsContext again without another file write.
+  //   Workaround: I will cast the key to `any` or string in setSortPreference if I need a dynamic key, 
+  //   BUT `SettingsContext` types are `Record<string, ...>`. So I can actually use ANY string key!
+  //   Great! I will use `artist_detail_songs` and `artist_detail_albums`.
+  
+  const getSortScope = () => {
+      if (type === 'album') return 'album_detail';
+      if (type === 'playlist') return 'playlist_detail';
+      if (type === 'artist') return activeTab === 'albums' ? 'artist_detail_albums' : 'artist_detail_songs';
+      return 'songs'; // Fallback
+  };
+
+  const sortScope = getSortScope();
+  const sortOption = sortPreferences[sortScope]?.option || 'Alphabetical';
+  const sortOrder = sortPreferences[sortScope]?.order || 'ASC';
+  const viewMode = sortPreferences[sortScope]?.viewMode || 'list';
   const [sortModalVisible, setSortModalVisible] = useState(false);
 
   // Selection Mode State
@@ -595,9 +629,9 @@ export default function GroupDetailScreen() {
                   currentSort={sortOption} 
                   onPress={() => setSortModalVisible(true)} 
                   viewMode={viewMode}
-                  onViewModeChange={(mode) => setSortPreference(activeTab, sortOption, sortOrder, mode)}
+                  onViewModeChange={(mode) => setSortPreference(sortScope as any, sortOption, sortOrder, mode)}
                   sortOrder={sortOrder}
-                  onToggleSortOrder={() => setSortPreference(activeTab, sortOption, sortOrder === 'ASC' ? 'DESC' : 'ASC', viewMode)}
+                  onToggleSortOrder={() => setSortPreference(sortScope as any, sortOption, sortOrder === 'ASC' ? 'DESC' : 'ASC', viewMode)}
                   onPlayAll={activeTab === 'songs' || type !== 'artist' ? handlePlayAll : undefined}
                   onShuffleAll={activeTab === 'songs' || type !== 'artist' ? handleShuffleAll : undefined}
                 />
@@ -649,7 +683,7 @@ export default function GroupDetailScreen() {
         onClose={() => setSortModalVisible(false)}
         options={getSortOptions()}
         currentValue={sortOption}
-        onSelect={(option) => setSortPreference(activeTab, option, sortOrder, viewMode)}
+        onSelect={(option) => setSortPreference(sortScope as any, option, sortOrder, viewMode)}
       />
     </View>
   );
