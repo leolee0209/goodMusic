@@ -62,3 +62,36 @@ stat for total songs, total listening time, total listening track count, favorat
 *   **Key Log Patterns**:
     *   `CRITICAL: Relative path passed to player!`: Indicates a failure in the Relative->Absolute conversion logic.
     *   `Native Player Error`: Indicates a codec or file accessibility issue at the OS level.
+
+---
+
+# Track Playing System
+
+## 1. Selection & Queue Management (`playTrack` in `MusicContext`)
+*   **Input**: Receives a `track` object and an optional `newQueue` (list of tracks).
+*   **Queue Construction**:
+    *   If `newQueue` is provided, it replaces the internal `originalPlaylist`.
+    *   **Shuffle Logic**:
+        *   If `isShuffle` is ON: The selected track is placed **first**, and the rest of the queue is randomized (`shuffleArray`).
+        *   If `isShuffle` is OFF: The queue remains as-is (e.g., Album order). The player just needs to know *which index* to start at.
+*   **Native Synchronization**:
+    *   `TrackPlayer.reset()` clears the previous native queue.
+    *   `TrackPlayer.add()` sends the new list of tracks (converted to native format via `toRntpTrack`) to the audio engine.
+    *   `TrackPlayer.skip(index)` jumps to the selected track immediately.
+    *   `TrackPlayer.play()` starts audio.
+
+## 2. Playback Lifecycle
+*   **Start**: Initiated by `TrackPlayer.play()`. The native OS service takes over (foreground service on Android, AudioSession on iOS).
+*   **Progress**: `useProgress` hook polls the native player every 1 second (configurable) to update the UI slider/timer.
+*   **Termination (End of Track)**:
+    *   **Automatic**: When a track finishes, `react-native-track-player` automatically proceeds to the next track in its internal queue.
+    *   **Repeat Logic**: The native player handles repeat modes (`Track`, `Queue`, `Off`) directly via `TrackPlayer.setRepeatMode`. The JS side just configures this preference.
+*   **Fallbacks**:
+    *   If a track fails to load (e.g., file deleted), `Event.PlaybackError` is fired. Currently, the app logs this but *does not* automatically skip to the next track (this is a potential improvement area).
+    *   If the app is killed, `AppKilledPlaybackBehavior` is set to stop playback and remove the notification.
+
+## 3. Switching Songs
+*   **Next/Prev**:
+    *   `playNext`: Calls `TrackPlayer.skipToNext()`.
+    *   `playPrev`: If >3 seconds into song, `seekTo(0)` (restart). Otherwise, `skipToPrevious()`.
+*   **Manual Selection**: Calling `playTrack` again completely rebuilds the native queue and resets the player state.
