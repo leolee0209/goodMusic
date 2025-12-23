@@ -1,4 +1,4 @@
-name: Build Unsigned iOS IPA (Turbo)
+name: Build Unsigned iOS IPA
 on:
   workflow_dispatch:
 

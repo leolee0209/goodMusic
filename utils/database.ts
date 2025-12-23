@@ -2,6 +2,7 @@ import * as SQLite from 'expo-sqlite';
 import { Track } from '../types';
 import { logToFile } from './logger';
 import { normalizeForSearch } from './stringUtils';
+import { toRelativePath, toAbsoluteUri } from './pathUtils';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -83,33 +84,40 @@ export const insertTracks = async (tracks: Track[]) => {
   const database = await initDatabase();
   await logToFile(`Inserting/Updating ${tracks.length} tracks in database...`);
   
-  // Batch insert for performance
-  // We use "INSERT OR REPLACE" to handle updates
   await database.withTransactionAsync(async () => {
     for (const track of tracks) {
+      // Store relative paths for persistence across app updates
+      // We also ensure ID is stable by making it relative if it was a URI
+      const stableId = toRelativePath(track.id);
+      const relativeUri = toRelativePath(track.uri);
+      const relativeArtwork = toRelativePath(track.artwork);
+      
       await database.runAsync(
         `INSERT OR REPLACE INTO tracks (id, title, artist, album, uri, artwork, duration, lrc, trackNumber) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [track.id, track.title, track.artist, track.album || 'Unknown', track.uri, track.artwork || null, track.duration || 0, track.lrc || null, track.trackNumber || null]
+        [stableId, track.title, track.artist, track.album || 'Unknown', relativeUri, relativeArtwork || null, track.duration || 0, track.lrc || null, track.trackNumber || null]
       );
     }
   });
   await logToFile('Track insertion completed.');
 };
 
+const mapRowToTrack = (row: any): Track => ({
+  // Restore absolute URIs for the current app session
+  id: toAbsoluteUri(row.id),
+  title: row.title,
+  artist: row.artist,
+  album: row.album,
+  uri: toAbsoluteUri(row.uri),
+  artwork: toAbsoluteUri(row.artwork),
+  lrc: row.lrc || undefined,
+  trackNumber: row.trackNumber || undefined,
+  duration: row.duration || 0
+});
+
 export const getAllTracks = async (): Promise<Track[]> => {
   const database = await initDatabase();
   const rows = await database.getAllAsync<any>('SELECT * FROM tracks ORDER BY title ASC');
-  
-  return rows.map(row => ({
-    id: row.id,
-    title: row.title,
-    artist: row.artist,
-    album: row.album,
-    uri: row.uri,
-    artwork: row.artwork,
-    lrc: row.lrc || undefined,
-    trackNumber: row.trackNumber || undefined
-  }));
+  return rows.map(mapRowToTrack);
 };
 
 export const searchTracks = async (query: string): Promise<Track[]> => {
@@ -121,17 +129,7 @@ export const searchTracks = async (query: string): Promise<Track[]> => {
      ORDER BY title ASC`,
     [sanitizedQuery, sanitizedQuery, sanitizedQuery]
   );
-  
-  return rows.map(row => ({
-    id: row.id,
-    title: row.title,
-    artist: row.artist,
-    album: row.album,
-    uri: row.uri,
-    artwork: row.artwork,
-    lrc: row.lrc || undefined,
-    trackNumber: row.trackNumber || undefined
-  }));
+  return rows.map(mapRowToTrack);
 };
 
 export const clearLibrary = async () => {
@@ -141,14 +139,16 @@ export const clearLibrary = async () => {
 
 export const deleteTrack = async (id: string) => {
   const database = await initDatabase();
-  await database.runAsync('DELETE FROM tracks WHERE id = ?', [id]);
+  const stableId = toRelativePath(id);
+  await database.runAsync('DELETE FROM tracks WHERE id = ?', [stableId]);
 };
 
 export const trackExists = async (id: string): Promise<boolean> => {
   const database = await initDatabase();
+  const stableId = toRelativePath(id);
   const row = await database.getFirstAsync<{ count: number }>(
     'SELECT COUNT(*) as count FROM tracks WHERE id = ?',
-    [id]
+    [stableId]
   );
   return (row?.count ?? 0) > 0;
 };
@@ -156,23 +156,15 @@ export const trackExists = async (id: string): Promise<boolean> => {
 export const getAllTrackUris = async (): Promise<Set<string>> => {
   const database = await initDatabase();
   const rows = await database.getAllAsync<any>('SELECT uri FROM tracks');
-  return new Set(rows.map(row => row.uri));
+  return new Set(rows.map(row => toAbsoluteUri(row.uri)));
 };
 
 export const getTrackById = async (id: string): Promise<Track | null> => {
   const database = await initDatabase();
-  const row = await database.getFirstAsync<any>('SELECT * FROM tracks WHERE id = ?', [id]);
+  const stableId = toRelativePath(id);
+  const row = await database.getFirstAsync<any>('SELECT * FROM tracks WHERE id = ?', [stableId]);
   if (!row) return null;
-  return {
-    id: row.id,
-    title: row.title,
-    artist: row.artist,
-    album: row.album,
-    uri: row.uri,
-    artwork: row.artwork,
-    lrc: row.lrc || undefined,
-    trackNumber: row.trackNumber || undefined
-  };
+  return mapRowToTrack(row);
 };
 
 export const getAllPlaylists = async () => {
@@ -229,16 +221,7 @@ export const getPlaylistTracks = async (playlistId: string): Promise<Track[]> =>
      ORDER BY pt.orderIndex ASC`,
     [playlistId]
   );
-  return rows.map(row => ({
-    id: row.id,
-    title: row.title,
-    artist: row.artist,
-    album: row.album,
-    uri: row.uri,
-    artwork: row.artwork,
-    lrc: row.lrc || undefined,
-    trackNumber: row.trackNumber || undefined
-  }));
+  return rows.map(mapRowToTrack);
 };
 
 export const deletePlaylist = async (playlistId: string) => {
@@ -248,16 +231,17 @@ export const deletePlaylist = async (playlistId: string) => {
 
 export const insertFolder = async (uri: string) => {
   const database = await initDatabase();
+  const relativeUri = toRelativePath(uri);
   await database.runAsync(
     'INSERT OR IGNORE INTO added_folders (uri, addedAt) VALUES (?, ?)',
-    [uri, Date.now()]
+    [relativeUri, Date.now()]
   );
 };
 
 export const getFolders = async (): Promise<string[]> => {
   const database = await initDatabase();
   const rows = await database.getAllAsync<any>('SELECT uri FROM added_folders');
-  return rows.map(row => row.uri);
+  return rows.map(row => toAbsoluteUri(row.uri));
 };
 
 export const addToHistory = async (trackId: string) => {
@@ -268,8 +252,6 @@ export const addToHistory = async (trackId: string) => {
     [trackId, now]
   );
   
-  // Prune history to keep only top 200
-  // We find the 200th timestamp and delete anything older
   const rows = await database.getAllAsync<any>(
     'SELECT playedAt FROM playback_history ORDER BY playedAt DESC LIMIT 1 OFFSET 199'
   );

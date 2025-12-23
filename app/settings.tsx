@@ -18,72 +18,26 @@ const THEME_COLORS = [
 ];
 
 export default function SettingsScreen() {
-  const router = useRouter();
-  const { refreshLibrary, importLocalFolder, pickAndImportFiles, isScanning, scanProgress, rescanLyrics, refreshAllMetadata } = useMusic();
-  const { defaultTab, setDefaultTab, themeColor, setThemeColor } = useSettings();
-  const [showTabPicker, setShowTabPicker] = React.useState(false);
-
-  const handleRefresh = async () => {
-    await refreshLibrary();
-  };
-
-  const handleRescanLyrics = async () => {
-    await rescanLyrics();
-  };
-
-  const handleRefreshAllMetadata = async () => {
-    Alert.alert(
-      "Refresh All Metadata",
-      "This will re-scan every file in your library to update tags and artwork. This may take a while.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Start", onPress: () => refreshAllMetadata() }
-      ]
-    );
-  };
-
-  const handleImportFolder = async () => {
-    await importLocalFolder();
-  };
-
-  const handleImportFiles = async () => {
-    await pickAndImportFiles();
-  };
-
-  const openGithub = () => {
-    Linking.openURL('https://github.com/leolee0209/goodMusic');
-  };
-
-  const progressPercent = scanProgress.total > 0 ? (scanProgress.current / scanProgress.total) * 100 : 0;
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="chevron-back" size={30} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Settings</Text>
-        <View style={{ width: 30 }} /> 
-      </View>
-
-      <ScrollView style={styles.scrollContent}>
-        {isScanning && (
-          <View style={styles.loadingContainer}>
-            <View style={styles.loadingHeader}>
-              <Text style={styles.loadingTitle}>
-                {scanProgress.total === 0 ? "Discovering files..." : "Processing Library..."}
-              </Text>
-              {scanProgress.total > 0 && (
-                <Text style={[styles.loadingCount, { color: themeColor }]}>{scanProgress.current} / {scanProgress.total}</Text>
-              )}
+    const router = useRouter();
+    const { refreshLibrary, importLocalFolder, pickAndImportFiles, isScanning, scanMessage, scanProgress, rescanLyrics, refreshAllMetadata } = useMusic();
+    const { defaultTab, setDefaultTab, themeColor, setThemeColor } = useSettings();
+  ...
+          {isScanning && (
+            <View style={styles.loadingContainer}>
+              <View style={styles.loadingHeader}>
+                <Text style={styles.loadingTitle}>
+                  {scanMessage || (scanProgress.total === 0 ? "Discovering files..." : "Processing Library...")}
+                </Text>
+                {scanProgress.total > 0 && (
+                  <Text style={[styles.loadingCount, { color: themeColor }]}>{scanProgress.current} / {scanProgress.total}</Text>
+                )}
+              </View>
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFill, { width: `${progressPercent}%`, backgroundColor: themeColor }]} />
+              </View>
             </View>
-            <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: `${progressPercent}%`, backgroundColor: themeColor }]} />
-            </View>
-          </View>
-        )}
-
-        <View style={styles.section}>
+          )}
+          <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: themeColor }]}>App Preferences</Text>
           
           <TouchableOpacity style={styles.settingItem} onPress={() => setShowTabPicker(true)}>
@@ -121,35 +75,25 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: themeColor }]}>Library Management</Text>
+          <Text style={[styles.sectionTitle, { color: themeColor }]}>Import Music</Text>
           
           <TouchableOpacity style={styles.settingItem} onPress={handleRefresh}>
             <View style={styles.settingIcon}>
-              <Ionicons name="refresh-outline" size={22} color={themeColor} />
+              <Ionicons name="sync-outline" size={22} color={themeColor} />
             </View>
             <View style={styles.settingInfo}>
-              <Text style={styles.settingText}>Refresh Library</Text>
-              <Text style={styles.settingSubtext}>Scan for new files</Text>
+              <Text style={styles.settingText}>Sync Library</Text>
+              <Text style={styles.settingSubtext}>Scan folders for new music</Text>
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.settingItem} onPress={handleRefreshAllMetadata}>
+          <TouchableOpacity style={styles.settingItem} onPress={handleImportFolder}>
             <View style={styles.settingIcon}>
-              <Ionicons name="library-outline" size={22} color={themeColor} />
+              <Ionicons name="folder-open-outline" size={22} color={themeColor} />
             </View>
             <View style={styles.settingInfo}>
-              <Text style={styles.settingText}>Refresh All Metadata</Text>
-              <Text style={styles.settingSubtext}>Re-read tags for all tracks</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.settingItem} onPress={handleRescanLyrics}>
-            <View style={styles.settingIcon}>
-              <Ionicons name="musical-notes-outline" size={22} color={themeColor} />
-            </View>
-            <View style={styles.settingInfo}>
-              <Text style={styles.settingText}>Rescan Lyrics</Text>
-              <Text style={styles.settingSubtext}>Update .lrc files from storage</Text>
+              <Text style={styles.settingText}>Add Folder</Text>
+              <Text style={styles.settingSubtext}>Select a directory to sync</Text>
             </View>
           </TouchableOpacity>
 
@@ -162,14 +106,28 @@ export default function SettingsScreen() {
               <Text style={styles.settingSubtext}>Pick specific audio files to add</Text>
             </View>
           </TouchableOpacity>
+        </View>
 
-          <TouchableOpacity style={styles.settingItem} onPress={handleImportFolder}>
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: themeColor }]}>Maintenance Utilities</Text>
+
+          <TouchableOpacity style={styles.settingItem} onPress={handleRefreshAllMetadata}>
             <View style={styles.settingIcon}>
-              <Ionicons name="folder-open-outline" size={22} color={themeColor} />
+              <Ionicons name="library-outline" size={22} color={themeColor} />
             </View>
             <View style={styles.settingInfo}>
-              <Text style={styles.settingText}>Add Folder</Text>
-              <Text style={styles.settingSubtext}>Select a directory to sync</Text>
+              <Text style={styles.settingText}>Reload All Metadata</Text>
+              <Text style={styles.settingSubtext}>Re-read tags and artwork for all tracks</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingItem} onPress={handleRescanLyrics}>
+            <View style={styles.settingIcon}>
+              <Ionicons name="musical-notes-outline" size={22} color={themeColor} />
+            </View>
+            <View style={styles.settingInfo}>
+              <Text style={styles.settingText}>Reload Lyrics</Text>
+              <Text style={styles.settingSubtext}>Force update .lrc files from storage</Text>
             </View>
           </TouchableOpacity>
         </View>

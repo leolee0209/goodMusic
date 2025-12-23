@@ -17,6 +17,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { getAllTracks, initDatabase, addToHistory, getPlaybackHistory } from '../utils/database';
 import { syncLibrary } from '../utils/librarySync';
 import { logToFile } from '../utils/logger';
+import { toAbsoluteUri, toRelativePath } from '../utils/pathUtils';
 
 const MusicContext = createContext<MusicContextType | undefined>(undefined);
 
@@ -43,6 +44,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [optimisticTrack, setOptimisticTrack] = useState<Track | null>(null);
   const [isShuffle, setIsShuffle] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -51,12 +53,19 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updateQueue = useRef<Promise<void>>(Promise.resolve());
   const playerReadyPromise = useRef<Promise<void> | null>(null);
 
+  // Helper to resolve artwork URIs (handles relative paths from DB)
+  const resolveArtworkUri = (uri: string | null | undefined) => {
+    if (!uri) return undefined;
+    return toAbsoluteUri(uri);
+  };
+
   // Helper to ensure URI has file:// prefix for RNTP
   const ensureFileUri = (uri: string) => {
       if (!uri) return uri;
-      let result = uri;
-      if (uri.startsWith('/') && !uri.startsWith('file://')) {
-          result = `file://${uri}`;
+      const absolute = toAbsoluteUri(uri);
+      let result = absolute;
+      if (result.startsWith('/') && !result.startsWith('file://')) {
+          result = `file://${result}`;
       }
       return result;
   };
@@ -64,7 +73,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Helper to serialize Track to RNTP Track
   const toRntpTrack = (track: Track) => {
     const rntpTrack = {
-      id: track.id,
+      id: toRelativePath(track.id), // Ensure ID is stable
       url: ensureFileUri(track.uri),
       title: track.title,
       artist: track.artist,
@@ -80,6 +89,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const queueTask = (task: () => Promise<void>) => {
     updateQueue.current = updateQueue.current.then(async () => {
       setIsScanning(true);
+      setScanMessage(null);
       try {
         await task();
       } finally {
@@ -94,6 +104,8 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!track) return;
 
     try {
+      setIsScanning(true);
+      setScanMessage(`Updating ${track.title}...`);
       await logToFile(`Action: Refreshing metadata for ${track.title} (${trackId})`);
       const { parseMetadata } = await import('../utils/fileScanner');
       const { insertTracks } = await import('../utils/database');
@@ -131,11 +143,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await logToFile('Metadata refreshed successfully.');
     } catch (e) {
       await logToFile(`Error refreshing metadata: ${e}`, 'ERROR');
+    } finally {
+      setIsScanning(false);
+      setScanMessage(null);
     }
   };
 
   const refreshAllMetadata = async () => {
     queueTask(async () => {
+      setScanMessage("Reloading tags and artwork...");
       await logToFile('Action: Refreshing metadata for ALL tracks...');
       const { parseMetadata } = await import('../utils/fileScanner');
       const { insertTracks } = await import('../utils/database');
@@ -197,6 +213,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const rescanLyrics = async () => {
     queueTask(async () => {
+      setScanMessage("Rescanning .lrc files...");
       await logToFile('Action: Rescanning lyrics for all tracks...');
       const { insertTracks } = await import('../utils/database');
       let updates: Track[] = [];
@@ -649,9 +666,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshLibrary = async () => {
     return new Promise<void>((resolve) => {
       queueTask(async () => {
+        setScanMessage("Checking for new music...");
         await logToFile('Task: Refreshing full library sync...');
         let processedCount = 0;
         
+        const oldLibrarySize = library.length;
         const syncedTracks = await syncLibrary(
           (track) => {
             processedCount++;
@@ -673,7 +692,17 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
            setLibrary(sortedTracks);
            setPlaylistState(prev => prev.length === 0 ? sortedTracks : prev);
            setOriginalPlaylist(prev => prev.length === 0 ? sortedTracks : prev);
-           await logToFile(`Sync completed: ${sortedTracks.length} tracks updated.`);
+           
+           if (sortedTracks.length === oldLibrarySize) {
+              setScanMessage("Nothing to add");
+              setIsScanning(true); // Force keep visible
+              setTimeout(() => {
+                setIsScanning(false);
+                setScanMessage(null);
+              }, 5000);
+           } else {
+              await logToFile(`Sync completed: ${sortedTracks.length} tracks updated.`);
+           }
         }
         resolve();
       });
@@ -909,6 +938,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       deletePlaylist, 
       loadPlaylists, 
       isScanning, 
+      scanMessage,
       scanProgress,
     }}>
       {children}

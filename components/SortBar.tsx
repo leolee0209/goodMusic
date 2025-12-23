@@ -45,24 +45,7 @@ export const SortBar: React.FC<SortBarProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Play/Shuffle Actions */}
-      {(onPlayAll || onShuffleAll) && (
-        <View style={styles.actionGroup}>
-           {onShuffleAll && (
-            <TouchableOpacity style={styles.iconButton} onPress={onShuffleAll}>
-              <Ionicons name="shuffle" size={20} color={themeColor} />
-            </TouchableOpacity>
-           )}
-           {onPlayAll && (
-            <TouchableOpacity style={styles.iconButton} onPress={onPlayAll}>
-              <Ionicons name="play" size={20} color={themeColor} />
-            </TouchableOpacity>
-           )}
-           <View style={styles.divider} />
-        </View>
-      )}
-
-      {/* Sort Controls */}
+      {/* Sort & View Controls (Now on Left) */}
       <View style={styles.controlGroup}>
         <TouchableOpacity style={styles.button} onPress={onPress}>
           <Text style={[styles.text, { color: themeColor }]}>{currentSort}</Text>
@@ -78,19 +61,35 @@ export const SortBar: React.FC<SortBarProps> = ({
             />
           </TouchableOpacity>
         )}
+
+        {viewMode && onViewModeChange && (
+          <TouchableOpacity 
+            style={[styles.button, styles.viewButton]} 
+            onPress={() => onViewModeChange(getNextViewMode(viewMode))}
+          >
+            <Ionicons name={getViewIcon(viewMode)} size={18} color={themeColor} />
+            {viewMode === 'condensed' && (
+              <Ionicons name="reorder-two" size={12} color={themeColor} style={styles.condensedOverlay} />
+            )}
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* View Mode */}
-      {viewMode && onViewModeChange && (
-        <TouchableOpacity 
-          style={[styles.button, styles.viewButton]} 
-          onPress={() => onViewModeChange(getNextViewMode(viewMode))}
-        >
-          <Ionicons name={getViewIcon(viewMode)} size={18} color={themeColor} />
-          {viewMode === 'condensed' && (
-            <Ionicons name="reorder-two" size={12} color={themeColor} style={styles.condensedOverlay} />
-          )}
-        </TouchableOpacity>
+      {/* Play/Shuffle Actions (Now on Right) */}
+      {(onPlayAll || onShuffleAll) && (
+        <View style={styles.actionGroup}>
+           <View style={styles.divider} />
+           {onPlayAll && (
+            <TouchableOpacity style={styles.iconButton} onPress={onPlayAll}>
+              <Ionicons name="play" size={20} color={themeColor} />
+            </TouchableOpacity>
+           )}
+           {onShuffleAll && (
+            <TouchableOpacity style={styles.iconButton} onPress={onShuffleAll}>
+              <Ionicons name="shuffle" size={20} color={themeColor} />
+            </TouchableOpacity>
+           )}
+        </View>
       )}
     </View>
   );
@@ -101,15 +100,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 10,
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
   },
   actionGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginRight: 'auto', // Push controls to the right, keep actions on left
-    gap: 4,
+    gap: 8,
   },
   controlGroup: {
     flexDirection: 'row',
@@ -131,7 +128,6 @@ const styles = StyleSheet.create({
     padding: 8,
     backgroundColor: '#1E1E1E',
     borderRadius: 20,
-    marginRight: 4,
   },
   viewButton: {
     paddingHorizontal: 8,
@@ -144,7 +140,7 @@ const styles = StyleSheet.create({
     width: 1,
     height: 20,
     backgroundColor: '#333',
-    marginHorizontal: 8,
+    marginRight: 4,
   },
   condensedOverlay: {
     position: 'absolute',

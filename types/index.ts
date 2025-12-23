@@ -56,6 +56,7 @@ export interface MusicContextType {
   
   // Scan State
   isScanning: boolean;
+  scanMessage: string | null;
   scanProgress: { current: number; total: number };
   playlist: Track[];
   setPlaylist: (tracks: Track[]) => void;
