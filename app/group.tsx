@@ -215,6 +215,17 @@ export default function GroupDetailScreen() {
       type: 'album'
     }));
 
+    // Filter by search query
+    if (searchQuery.trim() !== '') {
+      const normalizedQuery = normalizeForSearch(searchQuery);
+      const keywords = normalizedQuery.split(/\s+/).filter(k => k.length > 0);
+      
+      allAlbums = allAlbums.filter(album => {
+        const name = normalizeForSearch(album.name);
+        return keywords.every(k => name.includes(k));
+      });
+    }
+
     if (sortOption === 'Track Count') {
         allAlbums.sort((a, b) => b.tracks.length - a.tracks.length);
     } else {
@@ -225,7 +236,7 @@ export default function GroupDetailScreen() {
       allAlbums.reverse();
     }
     return allAlbums;
-  }, [activeGroup, showFavoritesOnly, favorites, sortOption, sortOrder]);
+  }, [activeGroup, showFavoritesOnly, favorites, sortOption, sortOrder, searchQuery]);
 
   const filteredTracks = useMemo(() => {
     if (!activeGroup) return [];
@@ -532,8 +543,7 @@ export default function GroupDetailScreen() {
 
   // Determine which list to show
   // If searching in Artist mode, show filtered Songs, otherwise show the active tab (Songs or Albums)
-  const isSearching = searchQuery.trim().length > 0;
-  const showSongsList = isSearching || activeTab === 'songs' || type !== 'artist';
+  const showSongsList = activeTab === 'songs' || type !== 'artist';
 
   return (
     <View style={styles.container}>
@@ -609,7 +619,7 @@ export default function GroupDetailScreen() {
         scrollEventThrottle={16}
         ListHeaderComponent={
           // Tabs and SortBar should be part of the scrollable content, appearing right after the hero spacer
-          activeGroup.type === 'artist' && !isSearching ? (
+          activeGroup.type === 'artist' ? (
              <View style={styles.controlsContainer}>
                <View style={styles.tabs}>
                   <TouchableOpacity 
@@ -632,8 +642,8 @@ export default function GroupDetailScreen() {
                   onViewModeChange={(mode) => setSortPreference(sortScope as any, sortOption, sortOrder, mode)}
                   sortOrder={sortOrder}
                   onToggleSortOrder={() => setSortPreference(sortScope as any, sortOption, sortOrder === 'ASC' ? 'DESC' : 'ASC', viewMode)}
-                  onPlayAll={activeTab === 'songs' || type !== 'artist' ? handlePlayAll : undefined}
-                  onShuffleAll={activeTab === 'songs' || type !== 'artist' ? handleShuffleAll : undefined}
+                  onPlayAll={handlePlayAll}
+                  onShuffleAll={handleShuffleAll}
                 />
              </View>
           ) : null
@@ -805,9 +815,11 @@ const styles = StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 1, // Reduced margin for "covered" feeling, or keep 12
+    marginBottom: 0, 
     padding: 8,
-    backgroundColor: '#121212', // Critical for covering the hero
+    backgroundColor: '#121212', 
+    borderBottomWidth: 1,
+    borderBottomColor: '#1E1E1E',
   },
   itemCondensed: {
     marginBottom: 0,

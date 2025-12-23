@@ -89,11 +89,16 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return result;
   };
 
-  const addTracksInBatches = async (tracks: any[]) => {
+  const addTracksInBatches = async (tracks: any[], onInitialBatch?: () => Promise<void>) => {
       const CHUNK_SIZE = 50; 
       for (let i = 0; i < tracks.length; i += CHUNK_SIZE) {
           const chunk = tracks.slice(i, i + CHUNK_SIZE);
           await TrackPlayer.add(chunk);
+          
+          if (i === 0 && onInitialBatch) {
+              await onInitialBatch();
+          }
+
           // Yield to event loop to prevent UI freeze
           await new Promise(resolve => setTimeout(resolve, 10));
       }
@@ -502,52 +507,41 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // Check for stale request
       if (lastPlayRequestId.current !== requestId) return;
 
-      const rntpTracks = queueToPlay.map(toRntpTrack);
-      await logToFile(`PlayTrack: Adding ${rntpTracks.length} tracks to native player (batched).`);
-      await addTracksInBatches(rntpTracks);
+      // ROTATION STRATEGY:
+      // Rotate the native queue so the target track is at index 0.
+      // This allows us to play immediately after the first batch is added,
+      // without waiting for the whole list or skipping deep into the queue.
+      // Native Queue: [Target, ...Next, ...Start, ...Prev]
+      const rotatedQueue = [
+          ...queueToPlay.slice(startIndex),
+          ...queueToPlay.slice(0, startIndex)
+      ];
+
+      const rntpTracks = rotatedQueue.map(toRntpTrack);
+      await logToFile(`PlayTrack: Adding ${rntpTracks.length} tracks (rotated). Target at Index 0.`);
       
-      // 5. Skip to correct index
-      // IMPORTANT: We must wait for 'add' to finish before skipping.
-      if (startIndex > 0) {
-        // Check for stale request
-        if (lastPlayRequestId.current !== requestId) return;
-
-        await logToFile(`PlayTrack: Skipping to index ${startIndex}.`);
-        try {
-            // Short delay to ensure native queue is ready
-            await new Promise(resolve => setTimeout(resolve, 50));
-            await TrackPlayer.skip(startIndex);
-        } catch (e) {
-            await logToFile(`PlayTrack: Skip failed initially: ${e}. Retrying after delay...`, 'WARN');
-            await new Promise(resolve => setTimeout(resolve, 300));
-            await TrackPlayer.skip(startIndex);
-        }
-      }
-
-      // 6. Start Playback
-      if (lastPlayRequestId.current !== requestId) return;
-      await applyRepeatMode(repeatMode);
-      await TrackPlayer.play();
-      await logToFile('PlayTrack: Play command sent.');
-
-      // 7. Post-Play Verification
-      setTimeout(async () => {
-        // If request is stale, don't run verification logic that might interfere
-        if (lastPlayRequestId.current !== requestId) return;
-
-        try {
-          const state = await TrackPlayer.getState();
-          const queue = await TrackPlayer.getQueue();
-          const current = await TrackPlayer.getActiveTrackIndex();
-          await logToFile(`PlayTrack: Verification (+2000ms) - State: ${state}, QueueSize: ${queue.length}, CurrentIndex: ${current}`);
+      // 5. Add Batches & Play Immediately
+      await addTracksInBatches(rntpTracks, async () => {
+          // This runs after the first batch (containing the target) is added.
+          if (lastPlayRequestId.current !== requestId) return;
           
-          if (state === State.Error || state === State.None) {
-             await logToFile('PlayTrack: Player seems stuck in Error/None state. Attempting recovery...', 'WARN');
-             await TrackPlayer.play(); 
-          }
-        } catch (e) {
-           await logToFile(`PlayTrack: Post-play verification failed: ${e}`, 'WARN');
-        }
+          await applyRepeatMode(repeatMode);
+          await TrackPlayer.play();
+          await logToFile('PlayTrack: IMMEDIATE PLAY triggered after first batch.');
+      });
+      
+      // 6. Post-Play Verification (Logic removed as skip is no longer needed)
+      setTimeout(async () => {
+        if (lastPlayRequestId.current !== requestId) return;
+        try {
+            const state = await TrackPlayer.getState();
+            // Verify we are playing the correct track
+            const currentTrack = await TrackPlayer.getActiveTrack();
+            const currentId = currentTrack?.id; // This is the relative path ID
+            const targetId = toRelativePath(track.id);
+            
+            await logToFile(`PlayTrack: Verification - State: ${state}, ActiveID: ${currentId}, TargetID: ${targetId}`);
+        } catch(e) { await logToFile(`PlayTrack: Verification error: ${e}`, 'WARN'); }
       }, 2000);
 
     } catch (error) {
@@ -644,11 +638,18 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             
             setPlaylistState(newQueue);
             await TrackPlayer.reset();
-            await addTracksInBatches(newQueue.map(toRntpTrack));
+            
+            // Optimization: Rotate new queue so current track is first
             const newIndex = newQueue.findIndex(t => t.id === currentId);
-            if (newIndex !== -1) await TrackPlayer.skip(newIndex);
-            await TrackPlayer.play();
-            await logToFile('Native queue updated for shuffle change.');
+            const rotatedQueue = newIndex !== -1 
+                ? [...newQueue.slice(newIndex), ...newQueue.slice(0, newIndex)]
+                : newQueue;
+
+            await addTracksInBatches(rotatedQueue.map(toRntpTrack), async () => {
+                await TrackPlayer.play();
+            });
+            
+            await logToFile('Native queue updated for shuffle change (Rotated).');
         } catch (e) {
             await logToFile(`Error updating queue for shuffle: ${e}`, 'ERROR');
         }
