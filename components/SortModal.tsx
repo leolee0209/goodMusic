@@ -1,59 +1,72 @@
 import React from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, TouchableWithoutFeedback } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSettings } from '../contexts/SettingsContext';
+import { SortOption } from '../utils/sortUtils';
+import { BottomSheet } from './BottomSheet';
 
 interface SortModalProps {
   visible: boolean;
   onClose: () => void;
-  options: { label: string; value: string }[];
-  currentValue: string;
-  onSelect: (value: string) => void;
+  options: { label: string; value: SortOption }[];
+  currentValue: SortOption;
+  onSelect: (value: SortOption) => void;
 }
 
 export const SortModal: React.FC<SortModalProps> = ({ visible, onClose, options, currentValue, onSelect }) => {
   const { themeColor } = useSettings();
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <TouchableWithoutFeedback>
-            <View style={styles.content}>
-              <Text style={styles.title}>Sort By</Text>
-              {options.map((option) => (
-                <TouchableOpacity 
-                  key={option.value} 
-                  style={styles.option} 
-                  onPress={() => {
-                    onSelect(option.value);
-                    onClose();
-                  }}
-                >
-                  <Text style={[
-                    styles.optionText, 
-                    currentValue === option.value && { color: themeColor, fontWeight: 'bold' }
-                  ]}>
-                    {option.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-              <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
-    </Modal>
+    <BottomSheet visible={visible} onClose={onClose} title="Sort By" showHandle={true}>
+      <View style={styles.optionsContainer}>
+        {options.map((option) => (
+          <TouchableOpacity 
+            key={option.value} 
+            style={styles.option} 
+            onPress={() => {
+              onSelect(option.value);
+              onClose();
+            }}
+          >
+            <Text style={[
+              styles.optionText, 
+              currentValue === option.value && { color: themeColor, fontWeight: 'bold' }
+            ]}>
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
+        <Text style={styles.cancelText}>Cancel</Text>
+      </TouchableOpacity>
+    </BottomSheet>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  content: { backgroundColor: '#282828', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
-  title: { color: '#888', fontSize: 14, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
-  option: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#333' },
-  optionText: { color: '#fff', fontSize: 16 },
-  cancelButton: { marginTop: 10, paddingVertical: 15, alignItems: 'center' },
-  cancelText: { color: 'red', fontSize: 16, fontWeight: 'bold' }
+  optionsContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+  },
+  option: { 
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  optionText: { 
+    color: '#fff',
+    fontSize: 16,
+  },
+  cancelButton: { 
+    marginTop: 10,
+    paddingVertical: 16,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  cancelText: { 
+    color: '#ff4444',
+    fontSize: 16,
+    fontWeight: 'bold',
+  }
 });

@@ -1,9 +1,10 @@
-import React from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, TouchableWithoutFeedback } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { Track, Playlist } from '../types';
-import { useSettings } from '../contexts/SettingsContext';
+import React from 'react';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useMusic } from '../contexts/MusicContext';
+import { useSettings } from '../contexts/SettingsContext';
+import { Playlist, Track } from '../types';
+import { BottomSheet } from './BottomSheet';
 
 interface TrackActionSheetProps {
   visible: boolean;
@@ -40,18 +41,14 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
-          <TouchableWithoutFeedback>
-            <View style={styles.container}>
-              <View style={styles.header}>
-                <View style={styles.handle} />
-                <Text style={styles.title} numberOfLines={1}>{track.title}</Text>
-                <Text style={styles.subtitle} numberOfLines={1}>{track.artist}</Text>
-              </View>
+    <BottomSheet visible={visible} onClose={onClose} showHandle={true}>
+      <View style={styles.header}>
+        <Text style={styles.title} numberOfLines={1}>{track.title}</Text>
+        <Text style={styles.subtitle} numberOfLines={1}>{track.artist}</Text>
+      </View>
 
-              <View style={styles.actions}>
+      <ScrollView style={styles.scrollContent}>
+        <View style={styles.actions}>
                 <TouchableOpacity style={styles.actionItem} onPress={onGoToArtist}>
                   <Ionicons name="person-outline" size={24} color="#fff" />
                   <Text style={styles.actionText}>Go to Artist</Text>
@@ -100,43 +97,21 @@ export const TrackActionSheet: React.FC<TrackActionSheetProps> = ({
                   </TouchableOpacity>
                 )}
               </View>
-              
-              <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-                <Text style={[styles.cancelText, { color: themeColor }]}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableWithoutFeedback>
-        </View>
-      </TouchableWithoutFeedback>
-    </Modal>
+            </ScrollView>
+            
+            <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
+              <Text style={[styles.cancelText, { color: themeColor }]}>Cancel</Text>
+            </TouchableOpacity>
+    </BottomSheet>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  container: {
-    backgroundColor: '#1E1E1E',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 40,
-    maxHeight: '80%',
-  },
   header: {
     alignItems: 'center',
     paddingVertical: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
-  },
-  handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: '#666',
-    borderRadius: 2,
-    marginBottom: 15,
   },
   title: {
     color: '#fff',
@@ -151,6 +126,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingHorizontal: 20,
     textAlign: 'center',
+  },
+  scrollContent: {
+    maxHeight: 400,
   },
   actions: {
     paddingVertical: 10,

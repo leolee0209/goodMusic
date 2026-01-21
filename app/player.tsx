@@ -1,17 +1,17 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, Share, Pressable, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useMusic } from '../contexts/MusicContext';
-import { useSettings } from '../contexts/SettingsContext';
-import { Track } from '../types';
-import { SyncedLyrics } from '../components/SyncedLyrics';
-import { QueueModal } from '../components/QueueModal';
-import { Toast } from '../components/Toast';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import Slider from '@react-native-community/slider';
 import * as Haptics from 'expo-haptics';
+import { useRouter } from 'expo-router';
+import React, { useState } from 'react';
+import { Dimensions, Image, Pressable, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { QueueModal } from '../components/QueueModal';
+import { SyncedLyrics } from '../components/SyncedLyrics';
+import { Toast } from '../components/Toast';
 import { TrackActionSheet } from '../components/TrackActionSheet';
+import { useMusic } from '../contexts/MusicContext';
+import { useSettings } from '../contexts/SettingsContext';
+import { useTrackActions } from '../hooks/useTrackActions';
 
 const { width } = Dimensions.get('window');
 
@@ -55,9 +55,8 @@ export default function PlayerScreen() {
   const [seekValue, setSeekValue] = useState(0);
   const [showQueue, setShowQueue] = useState(false);
   
-  // Action Sheet State
-  const [actionSheetVisible, setActionSheetVisible] = useState(false);
-  const [activeTrack, setActiveTrack] = useState<Track | null>(null);
+  // Custom Hooks
+  const { actionSheetVisible, activeTrack, openActionSheet, closeActionSheet } = useTrackActions();
 
   // Toast State
   const [toastVisible, setToastVisible] = useState(false);
@@ -80,15 +79,10 @@ export default function PlayerScreen() {
     );
   }
 
-  const handleSingleTrackAction = (track: Track) => {
-    setActiveTrack(track);
-    setActionSheetVisible(true);
-  };
-
   const handleActionSheetAddToPlaylist = async (playlistId: string) => {
     if (activeTrack) {
       await addToPlaylist(playlistId, [activeTrack.id]);
-      setActionSheetVisible(false);
+      closeActionSheet();
       showToast("Added to playlist");
     }
   };
@@ -267,7 +261,7 @@ export default function PlayerScreen() {
             </TouchableOpacity>
           </View>
           <View style={styles.trackActions}>
-            <TouchableOpacity onPress={() => handleSingleTrackAction(currentTrack)} style={styles.actionIcon}>
+            <TouchableOpacity onPress={() => openActionSheet(currentTrack)} style={styles.actionIcon}>
               <Ionicons name="add-outline" size={28} color="#fff" />
             </TouchableOpacity>
             <TouchableOpacity onPress={() => {
@@ -356,7 +350,7 @@ export default function PlayerScreen() {
 
       <TrackActionSheet
         visible={actionSheetVisible}
-        onClose={() => setActionSheetVisible(false)}
+        onClose={closeActionSheet}
         track={activeTrack}
         playlists={playlists}
         onAddToPlaylist={handleActionSheetAddToPlaylist}
