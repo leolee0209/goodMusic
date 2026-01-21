@@ -1,5 +1,5 @@
-import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { Paths } from 'expo-file-system';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
 
 const DOC_DIR = Paths.document.uri + (Paths.document.uri.endsWith('/') ? '' : '/');
 const LOG_FILE_PATH = DOC_DIR + 'app_logs.txt';
@@ -18,17 +18,20 @@ export const logToFile = async (message: string, level: 'INFO' | 'WARN' | 'ERROR
 
   try {
     const fileInfo = await LegacyFileSystem.getInfoAsync(LOG_FILE_PATH);
-    if (fileInfo.exists) {
-        // Simple size check rotation
-        if (fileInfo.size > MAX_LOG_SIZE) {
-            await LegacyFileSystem.deleteAsync(LOG_FILE_PATH);
-            await LegacyFileSystem.writeAsStringAsync(LOG_FILE_PATH, "[SYSTEM] Log rotated due to size limit.\n" + logEntry);
-        } else {
-            const currentContent = await LegacyFileSystem.readAsStringAsync(LOG_FILE_PATH);
-            await LegacyFileSystem.writeAsStringAsync(LOG_FILE_PATH, currentContent + logEntry);
-        }
+    
+    // Check if rotation is needed
+    if (fileInfo.exists && fileInfo.size > MAX_LOG_SIZE) {
+        await LegacyFileSystem.deleteAsync(LOG_FILE_PATH);
+        await LegacyFileSystem.writeAsStringAsync(LOG_FILE_PATH, "[SYSTEM] Log rotated due to size limit.\n" + logEntry);
     } else {
-        await LegacyFileSystem.writeAsStringAsync(LOG_FILE_PATH, logEntry);
+        // Legacy FileSystem doesn't support append, so we read and rewrite
+        // Not ideal, but necessary with the current API
+        if (!fileInfo.exists) {
+          await LegacyFileSystem.writeAsStringAsync(LOG_FILE_PATH, logEntry);
+        } else {
+          const currentContent = await LegacyFileSystem.readAsStringAsync(LOG_FILE_PATH);
+          await LegacyFileSystem.writeAsStringAsync(LOG_FILE_PATH, currentContent + logEntry);
+        }
     }
   } catch (error) {
     console.error("Failed to write to log file:", error);

@@ -14,6 +14,7 @@ import {
   buildLyricsUpdateBatch,
   buildMetadataUpdateBatch,
   parseAndEnrichTrack,
+  processTracksWithArtwork,
   refreshMetadataForTrack
 } from '../services/libraryService';
 import {
@@ -138,10 +139,11 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setIsScanning(true);
       setScanMessage(`Updating ${track.title}...`);
       await logToFile(`Action: Refreshing metadata for ${track.title}`);
-      const { parseMetadata } = await import('../utils/fileScanner');
+      const { parseMetadata, createAlbumArtCache } = await import('../utils/fileScanner');
       const { insertTracks } = await import('../utils/database');
       
-      const updated = await refreshMetadataForTrack(track, parseMetadata);
+      const albumArtCache = createAlbumArtCache();
+      const updated = await refreshMetadataForTrack(track, parseMetadata, albumArtCache);
       await insertTracks([updated]);
       setLibrary(prev => prev.map(t => t.id === trackId ? updated : t));
       setPlaylistState(prev => prev.map(t => t.id === trackId ? updated : t));
@@ -237,10 +239,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           await initDatabase();
           const tracks = await getAllTracks();
           
-          const tracksWithResolvedArt = tracks.map(t => ({
-              ...t,
-              artwork: resolveArtworkUri(t.artwork)
-          }));
+          const tracksWithResolvedArt = processTracksWithArtwork(tracks, resolveArtworkUri);
 
           setLibrary(tracksWithResolvedArt);
           setPlaylistState(tracksWithResolvedArt);
@@ -513,9 +512,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         );
 
         if (Array.isArray(syncedTracks)) {
-          const sorted = [...syncedTracks]
-            .map(t => ({ ...t, artwork: resolveArtworkUri(t.artwork) }))
-            .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+          const sorted = processTracksWithArtwork(syncedTracks, resolveArtworkUri);
           
           setLibrary(sorted);
           setPlaylistState(prev => prev.length === 0 ? sorted : prev);
@@ -532,20 +529,23 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const processAndAddFiles = async (fileUris: string[]) => {
-    const { parseMetadata } = await import('../utils/fileScanner');
-    const { insertTracks } = await import('../utils/database');
+    const { parseMetadata, createAlbumArtCache } = await import('../utils/fileScanner');
+    const { insertTracks, removeDuplicates } = await import('../utils/database');
     const newTracks: Track[] = [];
 
     const existingUris = new Set(library.map(t => t.uri));
     const uniqueFiles = fileUris.filter(uri => !existingUris.has(uri));
     setScanProgress({ current: 0, total: uniqueFiles.length });
 
+    // Use LRU cache instead of Map to prevent memory leaks
+    const albumArtCache = createAlbumArtCache();
+
     try {
       for (let i = 0; i < uniqueFiles.length; i++) {
         try {
           const uri = uniqueFiles[i];
-          const metadata = await parseMetadata(uri, uri.split('/').pop() || '', new Map());
-          const track = await parseAndEnrichTrack(uri, metadata, new Map());
+          const metadata = await parseMetadata(uri, uri.split('/').pop() || '', albumArtCache);
+          const track = await parseAndEnrichTrack(uri, metadata);
           newTracks.push(track);
           if ((i + 1) % 5 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
         } catch (e) {
@@ -555,11 +555,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       if (newTracks.length > 0) {
         await insertTracks(newTracks);
-        const sorted = (t: Track[]) => [...t, ...newTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-        setLibrary(sorted(library));
+        await removeDuplicates(); // Remove any duplicates
+        const allTracks = await getAllTracks();
+        const sorted = processTracksWithArtwork(allTracks, resolveArtworkUri);
+        setLibrary(sorted);
         if (queueTitle === 'All Songs') {
-          setPlaylistState(sorted(playlist));
-          setOriginalPlaylist(sorted(originalPlaylist));
+          setPlaylistState(sorted);
+          setOriginalPlaylist(sorted);
         }
         await logToFile(`Imported ${newTracks.length} tracks.`);
       }

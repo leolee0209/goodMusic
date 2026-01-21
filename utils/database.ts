@@ -1,8 +1,7 @@
 import * as SQLite from 'expo-sqlite';
 import { Track } from '../types';
 import { logToFile } from './logger';
-import { normalizeForSearch } from './stringUtils';
-import { toRelativePath, toAbsoluteUri } from './pathUtils';
+import { toAbsoluteUri, toRelativePath } from './pathUtils';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -275,38 +274,38 @@ export const removeDuplicates = async () => {
   const database = await initDatabase();
   await logToFile('Maintenance: Checking for duplicates...');
   
-  // Find duplicates based on Title + Artist + Album + Duration
-  const duplicates = await database.getAllAsync<any>(`
-    SELECT id, title, artist, album, duration, COUNT(*) as count
-    FROM tracks
-    GROUP BY title, artist, album, duration
-    HAVING count > 1
-  `);
-
-  if (duplicates.length === 0) {
-      await logToFile('Maintenance: No duplicates found.');
-      return;
-  }
-
-  await logToFile(`Maintenance: Found ${duplicates.length} sets of duplicates. Cleaning up...`);
+  // Strategy: If tracks have same title, artist, and album, they're duplicates
+  // Even if they have different URIs (file locations) or slightly different durations
+  // We keep the one with the longest duration (likely higher quality)
+  // OR if durations are similar, we keep the one with the lexicographically smallest id (most stable)
   
-  await database.withTransactionAsync(async () => {
-    for (const dup of duplicates) {
-      // Get all IDs for this duplicate set
-      const tracks = await database.getAllAsync<any>(
-        `SELECT id FROM tracks WHERE title = ? AND artist = ? AND album = ? AND duration = ?`,
-        [dup.title, dup.artist, dup.album, dup.duration]
-      );
-      
-      // Keep the first one, delete the rest
-      // We sort by ID length or lexicographically to be deterministic
-      tracks.sort((a, b) => a.id.localeCompare(b.id));
-      
-      const toDelete = tracks.slice(1);
-      for (const t of toDelete) {
-        await database.runAsync('DELETE FROM tracks WHERE id = ?', [t.id]);
-        await logToFile(`Maintenance: Deleted duplicate track ID: ${t.id}`);
-      }
-    }
-  });
+  const result = await database.runAsync(`
+    DELETE FROM tracks
+    WHERE id IN (
+      SELECT t1.id
+      FROM tracks t1
+      INNER JOIN (
+        SELECT title, artist, album, MAX(duration) as max_duration, MIN(id) as min_id
+        FROM tracks
+        WHERE title IS NOT NULL AND artist IS NOT NULL
+        GROUP BY title, artist, album
+        HAVING COUNT(*) > 1
+      ) t2
+      ON t1.title = t2.title
+      AND t1.artist = t2.artist
+      AND t1.album = t2.album
+      WHERE NOT (
+        -- Keep the track with longest duration, or if tied, the one with smallest id
+        (t1.duration = t2.max_duration AND t1.id = t2.min_id)
+        OR (t1.duration = t2.max_duration AND t1.id < t2.min_id)
+      )
+    )
+  `);
+  
+  const deletedCount = result.changes;
+  if (deletedCount > 0) {
+    await logToFile(`Maintenance: Deleted ${deletedCount} duplicate tracks (same title/artist/album at different locations).`);
+  } else {
+    await logToFile('Maintenance: No duplicates found.');
+  }
 };

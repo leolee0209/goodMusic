@@ -46,9 +46,13 @@ export const toAbsoluteUri = (path: string | null | undefined): string => {
     return CACHE_DIR + path.replace('cache://', '');
   }
 
-  // If it's already an absolute URI but stale, fix it
-  if (path.startsWith('file:///')) {
-     return toAbsoluteUri(toRelativePath(path));
+  // If it's already an absolute URI but stale, fix it (prevent infinite loop)
+  if (path.startsWith('file:///') && path.includes('/Containers/Data/Application/')) {
+    const relativePath = toRelativePath(path);
+    // Only convert if we actually got a relative path, otherwise return as-is
+    if (relativePath.startsWith('doc://') || relativePath.startsWith('cache://')) {
+      return toAbsoluteUri(relativePath);
+    }
   }
 
   return path;

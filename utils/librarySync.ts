@@ -1,8 +1,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { insertTracks, getAllTracks, deleteTrack, getTrackById, getAllTrackUris, removeDuplicates } from './database';
+import { createTrackFromMetadata, getFilePathComponents, readLrcFile } from '../services/libraryService';
 import { Track } from '../types';
-import { parseMetadata, discoverAudioFiles } from './fileScanner';
+import { deleteTrack, getAllTracks, insertTracks, removeDuplicates } from './database';
+import { createAlbumArtCache, discoverAudioFiles, parseMetadata } from './fileScanner';
 import { logToFile } from './logger';
+
+// Prevent concurrent syncs
+let isSyncInProgress = false;
 
 export const ensureMusicDirectory = async () => {
   const internalMusicDir = FileSystem.documentDirectory + 'music/';
@@ -24,42 +28,77 @@ export const ensureMusicDirectory = async () => {
 };
 
 export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onDiscovery?: (total: number) => void) => {
-  await logToFile('Starting library sync...');
+  // Prevent concurrent syncs
+  if (isSyncInProgress) {
+    await logToFile('Sync already in progress, skipping...', 'WARN');
+    return [];
+  }
+  
+  isSyncInProgress = true;
+  const syncStartTime = Date.now();
+  
   try {
+    await logToFile('========================================');
+    await logToFile('Starting library sync...');
     const internalMusicDir = FileSystem.documentDirectory + 'music/';
+    await logToFile('Music directory path: ' + internalMusicDir);
     await ensureMusicDirectory();
+    await logToFile('Music directory ensured.');
 
     // Phase 1: Discovery
     await logToFile(`Phase 1: Discovering files in ${internalMusicDir}`);
+    const discoveryStart = Date.now();
     const filePaths = await discoverAudioFiles(internalMusicDir);
+    const discoveryTime = Date.now() - discoveryStart;
     const totalFiles = filePaths.length;
-    await logToFile(`Discovered ${totalFiles} audio files.`);
+    await logToFile(`Discovered ${totalFiles} audio files in ${discoveryTime}ms`);
+    if (totalFiles > 0) {
+      await logToFile(`First 5 files: ${filePaths.slice(0, 5).map(f => f.split('/').pop()).join(', ')}`);
+    }
     if (onDiscovery) onDiscovery(totalFiles);
 
     // Phase 2: Processing
     await logToFile('Phase 2: Processing files and checking database...');
     
     // Optimization: Load all existing tracks into memory once (O(1) lookup vs O(N) DB queries)
+    const dbLoadStart = Date.now();
     const allDbTracks = await getAllTracks();
+    const dbLoadTime = Date.now() - dbLoadStart;
+    await logToFile(`Loaded ${allDbTracks.length} existing tracks from DB in ${dbLoadTime}ms`);
     const existingTracksMap = new Map<string, Track>();
+    // Use URI as key for faster lookup and duplicate prevention
     allDbTracks.forEach(t => existingTracksMap.set(t.uri, t));
+    await logToFile('Built existing tracks lookup map.');
     
     const finalTracks: Track[] = [];
-    const albumArtCache = new Map<string, string>();
+    const albumArtCache = createAlbumArtCache();
     let tracksToInsert: Track[] = [];
+    const processedUris = new Set<string>(); // Prevent duplicate processing
 
-    // Concurrency control: process files in chunks
-    const CHUNK_SIZE = 5; // Slight increase as DB bottleneck is removed
+    // Concurrency control: process files in chunks with better performance
+    const CHUNK_SIZE = 10; // Increased for better performance
+    await logToFile(`Processing ${totalFiles} files in chunks of ${CHUNK_SIZE}...`);
+    let processedCount = 0;
     for (let i = 0; i < totalFiles; i += CHUNK_SIZE) {
       const chunk = filePaths.slice(i, i + CHUNK_SIZE);
+      const chunkStart = Date.now();
       
-      // Yield to UI thread every few chunks to prevent freezing
-      if (i % (CHUNK_SIZE * 5) === 0) {
-        await new Promise(resolve => setTimeout(resolve, 0));
+      // Yield to UI thread more frequently to prevent freezing
+      if (i % (CHUNK_SIZE * 2) === 0) {
+        await logToFile(`Progress: ${i}/${totalFiles} files (${Math.round(i/totalFiles*100)}%)`);
+        await new Promise(resolve => setTimeout(resolve, 10));
       }
 
       await Promise.all(chunk.map(async (fullUri) => {
         try {
+          // Prevent duplicate processing of same URI
+          if (processedUris.has(fullUri)) {
+            await logToFile(`Skipping duplicate URI: ${fullUri}`, 'WARN');
+            return;
+          }
+          processedUris.add(fullUri);
+          processedCount++;
+          
           // Check memory cache first
           if (existingTracksMap.has(fullUri)) {
             const existing = existingTracksMap.get(fullUri)!;
@@ -69,35 +108,15 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
           }
 
           // It's a new track, parse metadata
-          const fileName = fullUri.split('/').pop() || "";
-          const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-          const dirPath = fullUri.substring(0, fullUri.lastIndexOf('/') + 1);
-          
-          let lrcContent = undefined;
-          const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
-          
-          // Try to find LRC
-          const lrcUri = dirPath + nameWithoutExt + '.lrc';
-          try {
-            const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
-            if (lrcInfo.exists) {
-              lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-            }
-          } catch (e) {
-            await logToFile(`Error reading LRC for ${fileName}: ${e}`, 'WARN');
+          const { fileName, dirPath } = getFilePathComponents(fullUri);
+          if (!fileName) {
+            await logToFile(`Invalid file path: ${fullUri}`, 'WARN');
+            return;
           }
-
-          const newTrack: Track = {
-            id: fullUri,
-            title: metadata.title,
-            artist: metadata.artist,
-            album: metadata.album,
-            uri: fullUri,
-            artwork: metadata.artwork,
-            lrc: lrcContent,
-            trackNumber: metadata.trackNumber,
-            duration: metadata.duration
-          };
+          
+          const lrcContent = await readLrcFile(fullUri);
+          const metadata = await parseMetadata(fullUri, fileName, albumArtCache);
+          const newTrack = createTrackFromMetadata(fullUri, metadata, lrcContent);
 
           finalTracks.push(newTrack);
           tracksToInsert.push(newTrack);
@@ -107,42 +126,81 @@ export const syncLibrary = async (onTrackProcessed?: (track: Track) => void, onD
           await logToFile(`Error processing file in sync: ${fullUri} - ${e}`, 'ERROR');
         }
       }));
+      
+      const chunkTime = Date.now() - chunkStart;
+      await logToFile(`Chunk processed: ${chunk.length} files in ${chunkTime}ms (avg ${Math.round(chunkTime/chunk.length)}ms/file)`);
 
-      // Batch Insert: Save every 50 new tracks to DB to keep memory low
-      if (tracksToInsert.length >= 50) {
-        await insertTracks(tracksToInsert);
-        tracksToInsert = [];
+      // Batch Insert: Save every 30 new tracks to DB for better performance
+      if (tracksToInsert.length >= 30) {
+        await logToFile(`Batch inserting ${tracksToInsert.length} tracks...`);
+        const batchStart = Date.now();
+        try {
+          await insertTracks(tracksToInsert);
+          const batchTime = Date.now() - batchStart;
+          await logToFile(`Batch insert completed in ${batchTime}ms`);
+          tracksToInsert = [];
+        } catch (e) {
+          await logToFile(`Error in batch insert: ${e}`, 'ERROR');
+          tracksToInsert = []; // Clear to prevent re-attempting failed batch
+        }
       }
     }
 
-    // Save remaining new tracks
+    // Save remaining new tracks with error handling
     if (tracksToInsert.length > 0) {
-      await insertTracks(tracksToInsert);
+      await logToFile(`Final batch: inserting ${tracksToInsert.length} tracks...`);
+      const finalBatchStart = Date.now();
+      try {
+        await insertTracks(tracksToInsert);
+        const finalBatchTime = Date.now() - finalBatchStart;
+        await logToFile(`Final batch insert completed in ${finalBatchTime}ms`);
+      } catch (e) {
+        await logToFile(`Error in final batch insert: ${e}`, 'ERROR');
+      }
     }
+
+    await logToFile(`Total files processed: ${processedCount}/${totalFiles}`);
+    await logToFile(`New tracks found: ${finalTracks.length - existingTracksMap.size}`);
+    await logToFile(`Existing tracks: ${existingTracksMap.size}`);
 
     // Phase 3: Cleanup missing files
     // Use the Set logic against our initial DB snapshot
     await logToFile('Phase 3: Cleaning up missing files from database...');
+    const cleanupStart = Date.now();
     const foundUris = new Set(filePaths);
     let deletedCount = 0;
     
     // We iterate the map we loaded at the start
     for (const [uri, track] of existingTracksMap.entries()) {
       if (!foundUris.has(uri)) {
+        await logToFile(`Removing missing track: ${track.title} by ${track.artist} (${uri})`, 'WARN');
         await deleteTrack(track.id);
         deletedCount++;
       }
     }
     
-    if (deletedCount > 0) await logToFile(`Deleted ${deletedCount} missing tracks from database.`);
+    const cleanupTime = Date.now() - cleanupStart;
+    if (deletedCount > 0) {
+      await logToFile(`Deleted ${deletedCount} missing tracks from database in ${cleanupTime}ms`);
+    } else {
+      await logToFile(`No missing tracks to delete (${cleanupTime}ms)`);
+    }
     
     // Phase 4: Deduplication
+    await logToFile('Phase 4: Removing duplicates...');
+    const dedupeStart = Date.now();
     await removeDuplicates();
+    const dedupeTime = Date.now() - dedupeStart;
+    await logToFile(`Deduplication completed in ${dedupeTime}ms`);
 
-    await logToFile('Library sync completed successfully.');
+    const totalSyncTime = Date.now() - syncStartTime;
+    await logToFile(`Library sync completed successfully in ${totalSyncTime}ms (${Math.round(totalSyncTime/1000)}s)`);
+    await logToFile('========================================');
     return finalTracks;
   } catch (e) {
     await logToFile(`Library Sync Error: ${e}`, 'ERROR');
     return [];
+  } finally {
+    isSyncInProgress = false;
   }
 };
