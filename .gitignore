@@ -2,6 +2,7 @@
 GEMINI.md
 FEATURES.md
 TODO.md
+.vscode
 # dependencies
 node_modules/
 

@@ -1,5 +1,5 @@
-import React, { useMemo, useEffect, useRef, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, Pressable, LayoutChangeEvent, TouchableOpacity, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const LINE_HEIGHT = 60;
 
@@ -19,7 +19,8 @@ interface LyricLine {
 const parseLrc = (lrc: string): LyricLine[] => {
   const lines = lrc.split('\n');
   const result: LyricLine[] = [];
-  const timeRegex = /\{(\d{2}):(\d{2})\.(\d{2,3})\}/;
+  // Standard LRC uses [mm:ss.xx]; previously braces caused all lines to be treated as unsynced
+  const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
 
   let hasAnySynced = false;
 

@@ -1,22 +1,33 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import TrackPlayer, { 
-  Capability, 
-  Event, 
-  RepeatMode as RNTPRepeatMode, 
-  State, 
-  useActiveTrack, 
-  useIsPlaying, 
-  useProgress,
-  AppKilledPlaybackBehavior
-} from 'react-native-track-player';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Track, MusicContextType, RepeatMode, PlaybackOrigin, Playlist } from '../types';
-import * as FileSystem from 'expo-file-system/legacy';
 import { Paths } from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import * as DocumentPicker from 'expo-document-picker';
-import { getAllTracks, initDatabase, addToHistory, getPlaybackHistory, removeDuplicates } from '../utils/database';
-import { syncLibrary, ensureMusicDirectory } from '../utils/librarySync';
+import TrackPlayer, { State, useActiveTrack, useIsPlaying, useProgress } from 'react-native-track-player';
+import {
+  ensureMusicDir,
+  importFilesFromAndroidFolder,
+  importFilesFromIosFolder,
+  importFilesFromPicker
+} from '../services/fileImportService';
+import {
+  buildLyricsUpdateBatch,
+  buildMetadataUpdateBatch,
+  parseAndEnrichTrack,
+  refreshMetadataForTrack
+} from '../services/libraryService';
+import {
+  addTracksInBatches,
+  applyRepeatModeNative,
+  ensurePlayerSetup,
+  resetAndLoadQueue,
+  resolveArtworkUri as resolveArtworkFromService,
+  rotateQueue,
+  toRntpTrack
+} from '../services/playerService';
+import { MusicContextType, PlaybackOrigin, Playlist, RepeatMode, Track } from '../types';
+import { addToHistory, getAllTracks, getPlaybackHistory, initDatabase, removeDuplicates } from '../utils/database';
+import { ensureMusicDirectory } from '../utils/librarySync';
 import { logToFile } from '../utils/logger';
 import { toAbsoluteUri, toRelativePath } from '../utils/pathUtils';
 
@@ -28,6 +39,36 @@ const STORAGE_KEY_FAVORITES = '@goodmusic_favorites';
 const STORAGE_KEY_SHOW_LYRICS = '@goodmusic_show_lyrics';
 
 const MUSIC_DIR = Paths.document.uri + (Paths.document.uri.endsWith('/') ? '' : '/') + 'music/';
+
+const shuffleArray = (array: Track[]) => {
+  const copy = [...array];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+};
+
+const buildQueueForTrack = (
+  track: Track,
+  incomingQueue: Track[] | undefined,
+  originalQueue: Track[],
+  isShuffle: boolean
+) => {
+  const baseQueue = incomingQueue?.length ? [...incomingQueue] : [...originalQueue];
+  if (baseQueue.length === 0) return { queue: [track], startIndex: 0, logicalQueue: [track] };
+
+  if (isShuffle) {
+    const others = baseQueue.filter(t => t.id !== track.id);
+    return { queue: [track, ...shuffleArray(others)], startIndex: 0, logicalQueue: baseQueue };
+  }
+
+  const startIndex = baseQueue.findIndex(t => t.id === track.id);
+  if (startIndex === -1) {
+    return { queue: [track, ...baseQueue], startIndex: 0, logicalQueue: baseQueue };
+  }
+  return { queue: baseQueue, startIndex, logicalQueue: baseQueue };
+};
 
 export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // RNTP Hooks
@@ -69,56 +110,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [showLyrics, setShowLyrics] = useState(false);
 
   const updateQueue = useRef<Promise<void>>(Promise.resolve());
-  const playerReadyPromise = useRef<Promise<void> | null>(null);
+
   const lastPlayRequestId = useRef<string>("");
 
-  // Helper to resolve artwork URIs (handles relative paths from DB)
-  const resolveArtworkUri = (uri: string | null | undefined) => {
-    if (!uri) return undefined;
-    return toAbsoluteUri(uri);
-  };
+  const resolveArtworkUri = (uri: string | null | undefined) => resolveArtworkFromService(uri);
 
-  // Helper to ensure URI has file:// prefix for RNTP
-  const ensureFileUri = (uri: string) => {
-      if (!uri) return uri;
-      const absolute = toAbsoluteUri(uri);
-      let result = absolute;
-      if (result.startsWith('/') && !result.startsWith('file://')) {
-          result = `file://${result}`;
-      }
-      return result;
-  };
-
-  const addTracksInBatches = async (tracks: any[], onInitialBatch?: () => Promise<void>) => {
-      const CHUNK_SIZE = 50; 
-      for (let i = 0; i < tracks.length; i += CHUNK_SIZE) {
-          const chunk = tracks.slice(i, i + CHUNK_SIZE);
-          await TrackPlayer.add(chunk);
-          
-          if (i === 0 && onInitialBatch) {
-              await onInitialBatch();
-          }
-
-          // Yield to event loop to prevent UI freeze
-          await new Promise(resolve => setTimeout(resolve, 10));
-      }
-  };
-
-  // Helper to serialize Track to RNTP Track
-  const toRntpTrack = (track: Track) => {
-    const rntpTrack = {
-      id: toRelativePath(track.id), // Ensure ID is stable
-      url: ensureFileUri(track.uri),
-      title: track.title,
-      artist: track.artist,
-      album: track.album || 'Unknown Album',
-      artwork: resolveArtworkUri(track.artwork),
-      duration: track.duration ? track.duration / 1000 : 0, 
-      original: track 
-    };
-    // logToFile removed for performance in large lists
-    return rntpTrack;
-  };
+  // Queue helpers now live in services/playerService
 
   const queueTask = (task: () => Promise<void>) => {
     updateQueue.current = updateQueue.current.then(async () => {
@@ -140,42 +137,15 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       setIsScanning(true);
       setScanMessage(`Updating ${track.title}...`);
-      await logToFile(`Action: Refreshing metadata for ${track.title} (${trackId})`);
+      await logToFile(`Action: Refreshing metadata for ${track.title}`);
       const { parseMetadata } = await import('../utils/fileScanner');
       const { insertTracks } = await import('../utils/database');
       
-      const fileName = track.uri.split('/').pop() || "";
-      const albumArtCache = new Map<string, string>();
-      const metadata = await parseMetadata(track.uri, fileName, albumArtCache);
-      
-      let lrcContent = undefined;
-      const dirPath = track.uri.substring(0, track.uri.lastIndexOf('/') + 1);
-      const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-      const lrcUri = dirPath + nameWithoutExt + '.lrc';
-      try {
-         const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
-         if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-      } catch(e) {
-         await logToFile(`Error reading LRC for ${fileName}: ${e}`, 'WARN');
-      }
-
-      const updatedTrack: Track = {
-        ...track,
-        title: metadata.title,
-        artist: metadata.artist,
-        album: metadata.album,
-        artwork: resolveArtworkUri(metadata.artwork),
-        lrc: lrcContent,
-        trackNumber: metadata.trackNumber,
-        duration: metadata.duration
-      };
-
-      await insertTracks([updatedTrack]);
-      
-      setLibrary(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
-      setPlaylistState(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
-      setOriginalPlaylist(prev => prev.map(t => t.id === trackId ? updatedTrack : t));
-      
+      const updated = await refreshMetadataForTrack(track, parseMetadata);
+      await insertTracks([updated]);
+      setLibrary(prev => prev.map(t => t.id === trackId ? updated : t));
+      setPlaylistState(prev => prev.map(t => t.id === trackId ? updated : t));
+      setOriginalPlaylist(prev => prev.map(t => t.id === trackId ? updated : t));
       await logToFile('Metadata refreshed successfully.');
     } catch (e) {
       await logToFile(`Error refreshing metadata: ${e}`, 'ERROR');
@@ -192,60 +162,23 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const { parseMetadata } = await import('../utils/fileScanner');
       const { insertTracks } = await import('../utils/database');
       
-      let processed = 0;
       setScanProgress({ current: 0, total: library.length });
-      setIsScanning(true);
-      
-      const updates: Track[] = [];
-      const albumArtCache = new Map<string, string>();
-
-      for (const track of library) {
-        try {
-          const fileName = track.uri.split('/').pop() || "";
-          const metadata = await parseMetadata(track.uri, fileName, albumArtCache);
-          
-          let lrcContent = undefined;
-          const dirPath = track.uri.substring(0, track.uri.lastIndexOf('/') + 1);
-          const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-          const lrcUri = dirPath + nameWithoutExt + '.lrc';
-          try {
-             const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
-             if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-          } catch(e) {
-             await logToFile(`Error reading LRC for ${fileName}: ${e}`, 'WARN');
-          }
-
-          const updatedTrack: Track = {
-            ...track,
-            title: metadata.title,
-            artist: metadata.artist,
-            album: metadata.album,
-            artwork: resolveArtworkUri(metadata.artwork),
-            lrc: lrcContent,
-            trackNumber: metadata.trackNumber,
-            duration: metadata.duration
-          };
-          
-          updates.push(updatedTrack);
-        } catch (e) {
-           await logToFile(`Failed to refresh metadata for ${track.uri}: ${e}`, 'WARN');
-        }
-        
-        processed++;
-        if (processed % 10 === 0) setScanProgress(prev => ({ ...prev, current: processed }));
-      }
+      const updates = await buildMetadataUpdateBatch(
+        library,
+        parseMetadata,
+        (current) => setScanProgress(prev => ({ ...prev, current }))
+      );
 
       if (updates.length > 0) {
-          await insertTracks(updates);
-          await removeDuplicates(); // Clean up if any duplicates were created
-          setLibrary(prev => {
-              const updateMap = new Map(updates.map(u => [u.id, u]));
-              return prev.map(t => updateMap.get(t.id) || t).sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-          });
-          await logToFile(`Full metadata refresh complete. Updated ${updates.length} tracks.`);
+        await insertTracks(updates);
+        await removeDuplicates();
+        const updateMap = new Map(updates.map(u => [u.id, u]));
+        const sorted = library
+          .map(t => updateMap.get(t.id) || t)
+          .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+        setLibrary(sorted);
+        await logToFile(`Metadata refresh complete. Updated ${updates.length} tracks.`);
       }
-      
-      setIsScanning(false);
       setScanProgress({ current: 0, total: 0 });
     });
   };
@@ -255,45 +188,21 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setScanMessage("Rescanning .lrc files...");
       await logToFile('Action: Rescanning lyrics for all tracks...');
       const { insertTracks } = await import('../utils/database');
-      let updates: Track[] = [];
-      let processed = 0;
-      setScanProgress({ current: 0, total: library.length });
-      setIsScanning(true);
 
-      for (const track of library) {
-        try {
-          const fileName = track.uri.split('/').pop() || "";
-          const dirPath = track.uri.substring(0, track.uri.lastIndexOf('/') + 1);
-          const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-          const lrcUri = dirPath + nameWithoutExt + '.lrc';
-          
-          const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
-          if (lrcInfo.exists) {
-             const lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-             if (lrcContent !== track.lrc) {
-                 const updated = { ...track, lrc: lrcContent };
-                 updates.push(updated);
-             }
-          }
-        } catch (e) {
-           await logToFile(`Error rescanning lyrics for ${track.title}: ${e}`, 'WARN');
-        }
-        
-        processed++;
-        if (processed % 50 === 0) setScanProgress(prev => ({ ...prev, current: processed }));
-      }
+      setScanProgress({ current: 0, total: library.length });
+      const updates = await buildLyricsUpdateBatch(
+        library,
+        (current) => setScanProgress(prev => ({ ...prev, current }))
+      );
 
       if (updates.length > 0) {
-          await insertTracks(updates);
-          setLibrary(prev => {
-              const updateMap = new Map(updates.map(u => [u.id, u]));
-              return prev.map(t => updateMap.get(t.id) || t);
-          });
-          await logToFile(`Lyrics rescan complete. Updated ${updates.length} tracks.`);
+        await insertTracks(updates);
+        const updateMap = new Map(updates.map(u => [u.id, u]));
+        setLibrary(prev => prev.map(t => updateMap.get(t.id) || t));
+        await logToFile(`Lyrics rescan complete. Updated ${updates.length} tracks.`);
       } else {
-          await logToFile('Lyrics rescan complete. No updates found.');
+        await logToFile('Lyrics rescan complete. No updates found.');
       }
-      setIsScanning(false);
       setScanProgress({ current: 0, total: 0 });
     });
   };
@@ -316,66 +225,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const setupPlayer = async () => {
-    if (playerReadyPromise.current) return playerReadyPromise.current;
-
-    playerReadyPromise.current = (async () => {
-        try {
-            await logToFile('Setup: Starting player initialization sequence...');
-            
-            let isInitialized = false;
-            try {
-                const state = await TrackPlayer.getState();
-                isInitialized = state !== State.None;
-                await logToFile(`Setup: Current player state is ${state}. Initialized: ${isInitialized}`);
-            } catch (e) {
-                await logToFile(`Setup: Player not initialized yet (verified by error: ${e})`);
-            }
-
-            if (!isInitialized) {
-                await logToFile('Setup: Calling TrackPlayer.setupPlayer()...');
-                await TrackPlayer.setupPlayer();
-                await logToFile('Setup: TrackPlayer.setupPlayer() call returned.');
-                
-                // Small delay to ensure native side is fully ready
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-            
-            try {
-                await TrackPlayer.updateOptions({
-                  capabilities: [
-                    Capability.Play,
-                    Capability.Pause,
-                    Capability.SkipToNext,
-                    Capability.SkipToPrevious,
-                    Capability.SeekTo,
-                  ],
-                  compactCapabilities: [
-                    Capability.Play,
-                    Capability.Pause,
-                    Capability.SkipToNext,
-                  ],
-                  progressUpdateEventInterval: 1,
-                  android: {
-                      appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification
-                  }
-                });
-                await logToFile('Setup: Capabilities updated.');
-            } catch (optErr) {
-                await logToFile(`Setup: updateOptions failed (non-critical): ${optErr}`, 'WARN');
-            }
-
-            const finalState = await TrackPlayer.getState();
-            await logToFile(`Setup: Complete. Final Player State: ${finalState}`);
-          } catch (e) {
-            await logToFile(`Setup: CRITICAL FAILURE: ${e}`, 'ERROR');
-            playerReadyPromise.current = null; 
-            throw e;
-          }
-    })();
-
-    return playerReadyPromise.current;
-  };
+  const setupPlayer = async () => ensurePlayerSetup();
 
   useEffect(() => {
     setupPlayer().catch(e => logToFile(`App mount setupPlayer failed: ${e}`, 'ERROR'));
@@ -434,121 +284,53 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     loadPreferences();
   }, []);
 
+  const updateHistory = (trackId: string) => {
+    addToHistory(trackId).then(async () => {
+      const hist = await getPlaybackHistory();
+      setHistory(hist);
+    });
+  };
+
   const playTrack = async (track: Track, newQueue?: Track[], title?: string, origin?: PlaybackOrigin) => {
     const requestId = track.id + Date.now();
     lastPlayRequestId.current = requestId;
 
     try {
-      await logToFile(`PlayTrack: Request for "${track.title}" (ID: ${track.id}) - ReqID: ${requestId}`);
+      await logToFile(`PlayTrack: request for "${track.title}" (${requestId})`);
       setOptimisticTrack(track);
       setIsTransitioning(true);
+      updateHistory(track.id);
+      await setupPlayer();
+      if (lastPlayRequestId.current !== requestId) return;
 
-      // Add to history
-      addToHistory(track.id).then(async () => {
-          const hist = await getPlaybackHistory();
-          setHistory(hist);
-      });
-      
-      // 1. Ensure Player is ready
-      await setupPlayer(); 
-
-      // Check for stale request
-      if (lastPlayRequestId.current !== requestId) {
-          await logToFile(`PlayTrack: Aborted stale request ${requestId}`);
-          return;
-      }
-      
-      // 2. Prepare the logical queue
-      let finalQueue = newQueue ? [...newQueue] : [...originalPlaylist];
-      
-      // Edge case: Empty queue
-      if (finalQueue.length === 0) {
-        await logToFile('PlayTrack: Warn - Queue was empty, creating single-track queue.');
-        finalQueue = [track];
-      }
-
-      // Update Context State
+      const { queue, startIndex, logicalQueue } = buildQueueForTrack(track, newQueue, originalPlaylist, isShuffle);
       if (newQueue) {
-        setOriginalPlaylist(finalQueue);
+        setOriginalPlaylist(logicalQueue);
         setQueueTitle(title || 'All Songs');
         setPlaybackOrigin(origin || null);
-        await logToFile(`PlayTrack: Context updated with new queue of ${finalQueue.length} tracks.`);
       }
-
-      // 3. Determine Playback Order (Shuffle Logic)
-      let queueToPlay = [...finalQueue];
-      let startIndex = 0;
-
-      if (isShuffle) {
-        await logToFile('PlayTrack: Shuffle is ON. Re-ordering queue.');
-        // If shuffling, we want the clicked track to be first, and the rest randomized
-        const others = queueToPlay.filter(t => t.id !== track.id);
-        queueToPlay = [track, ...shuffleArray(others)];
-        startIndex = 0;
-      } else {
-        // Normal order: find the index of the clicked track
-        startIndex = queueToPlay.findIndex(t => t.id === track.id);
-        if (startIndex === -1) {
-          await logToFile(`PlayTrack: Warn - Track ${track.id} not found in queue. Prepending.`, 'WARN');
-          queueToPlay = [track, ...queueToPlay];
-          startIndex = 0;
-        }
-      }
-
-      setPlaylistState(queueToPlay);
-      
-      // Check for stale request before native operations
+      setPlaylistState(queue);
       if (lastPlayRequestId.current !== requestId) return;
 
-      // 4. Update Native Player
-      await logToFile(`PlayTrack: Resetting native player...`);
-      await TrackPlayer.reset();
-      
-      // Check for stale request
-      if (lastPlayRequestId.current !== requestId) return;
+      const rotated = rotateQueue(queue, startIndex).map(toRntpTrack);
+      await resetAndLoadQueue({ tracks: rotated, repeatMode });
 
-      // ROTATION STRATEGY:
-      // Rotate the native queue so the target track is at index 0.
-      // This allows us to play immediately after the first batch is added,
-      // without waiting for the whole list or skipping deep into the queue.
-      // Native Queue: [Target, ...Next, ...Start, ...Prev]
-      const rotatedQueue = [
-          ...queueToPlay.slice(startIndex),
-          ...queueToPlay.slice(0, startIndex)
-      ];
-
-      const rntpTracks = rotatedQueue.map(toRntpTrack);
-      await logToFile(`PlayTrack: Adding ${rntpTracks.length} tracks (rotated). Target at Index 0.`);
-      
-      // 5. Add Batches & Play Immediately
-      await addTracksInBatches(rntpTracks, async () => {
-          // This runs after the first batch (containing the target) is added.
-          if (lastPlayRequestId.current !== requestId) return;
-          
-          await applyRepeatMode(repeatMode);
-          await TrackPlayer.play();
-          await logToFile('PlayTrack: IMMEDIATE PLAY triggered after first batch.');
-      });
-      
-      // 6. Post-Play Verification (Logic removed as skip is no longer needed)
       setTimeout(async () => {
         if (lastPlayRequestId.current !== requestId) return;
         try {
-            const state = await TrackPlayer.getState();
-            // Verify we are playing the correct track
-            const currentTrack = await TrackPlayer.getActiveTrack();
-            const currentId = currentTrack?.id; // This is the relative path ID
-            const targetId = toRelativePath(track.id);
-            
-            await logToFile(`PlayTrack: Verification - State: ${state}, ActiveID: ${currentId}, TargetID: ${targetId}`);
-        } catch(e) { await logToFile(`PlayTrack: Verification error: ${e}`, 'WARN'); }
+          const currentTrack = await TrackPlayer.getActiveTrack();
+          const currentId = currentTrack?.id;
+          const targetId = toRelativePath(track.id);
+          await logToFile(`PlayTrack verify: active ${currentId} target ${targetId}`);
+        } catch (e) {
+          await logToFile(`PlayTrack verify error: ${e}`, 'WARN');
+        }
       }, 2000);
-
     } catch (error) {
       if (lastPlayRequestId.current === requestId) {
-          setOptimisticTrack(null);
-          setIsTransitioning(false);
-          await logToFile(`PlayTrack: CRITICAL ERROR: ${error}`, 'ERROR');
+        setOptimisticTrack(null);
+        setIsTransitioning(false);
+        await logToFile(`PlayTrack: error ${error}`, 'ERROR');
       }
     }
   };
@@ -607,15 +389,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const shuffleArray = (array: Track[]) => {
-    const newArr = [...array];
-    for (let i = newArr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [newArr[i], newArr[j]] = [newArr[j], newArr[i]];
-    }
-    return newArr;
-  };
-
   const toggleShuffle = async () => {
     const newShuffleState = !isShuffle;
     setIsShuffle(newShuffleState);
@@ -623,10 +396,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     AsyncStorage.setItem(STORAGE_KEY_SHUFFLE, JSON.stringify(newShuffleState));
     
     if (activeTrack) {
-        try {
-            await setupPlayer();
-            const currentId = activeTrack.id;
-            const currentTrackObj = originalPlaylist.find(t => t.id === currentId);
+      try {
+        await setupPlayer();
+        const currentId = toAbsoluteUri(activeTrack.id);
+        const currentTrackObj = originalPlaylist.find(t => t.id === currentId);
             
             let newQueue = [];
             if (newShuffleState) {
@@ -657,15 +430,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
   
   const applyRepeatMode = async (mode: RepeatMode) => {
-      try {
-          await setupPlayer();
-          if (mode === 'none') await TrackPlayer.setRepeatMode(RNTPRepeatMode.Off);
-          if (mode === 'all') await TrackPlayer.setRepeatMode(RNTPRepeatMode.Queue);
-          if (mode === 'one') await TrackPlayer.setRepeatMode(RNTPRepeatMode.Track);
-          await logToFile(`Native Player: RepeatMode applied - ${mode}`);
-      } catch (e) {
-          await logToFile(`Error applyRepeatMode: ${e}`, 'ERROR');
-      }
+    try {
+      await setupPlayer();
+      await applyRepeatModeNative(mode);
+      await logToFile(`Native Player: RepeatMode applied - ${mode}`);
+    } catch (e) {
+      await logToFile(`Error applyRepeatMode: ${e}`, 'ERROR');
+    }
   };
 
   const toggleRepeatMode = () => {
@@ -733,42 +504,27 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         setScanMessage("Checking for new music...");
-        await logToFile('Task: Refreshing full library sync...');
-        let processedCount = 0;
+        const { syncLibrary } = await import('../utils/librarySync');
+        const oldSize = library.length;
         
-        const oldLibrarySize = library.length;
         const syncedTracks = await syncLibrary(
-          (track) => {
-            processedCount++;
-            if (processedCount % 10 === 0) {
-                setScanProgress(prev => ({ ...prev, current: processedCount }));
-            }
-          },
-          (total) => {
-            setScanProgress({ current: 0, total });
-          }
+          (track) => setScanProgress(prev => ({ ...prev, current: prev.current + 1 })),
+          (total) => setScanProgress({ current: 0, total })
         );
 
         if (Array.isArray(syncedTracks)) {
-           const tracksWithResolvedArt = syncedTracks.map(t => ({
-               ...t,
-               artwork: resolveArtworkUri(t.artwork)
-           }));
-           const sortedTracks = [...tracksWithResolvedArt].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-           setLibrary(sortedTracks);
-           setPlaylistState(prev => prev.length === 0 ? sortedTracks : prev);
-           setOriginalPlaylist(prev => prev.length === 0 ? sortedTracks : prev);
-           
-           if (sortedTracks.length === oldLibrarySize) {
-              setScanMessage("Nothing to add");
-              setIsScanning(true); // Force keep visible
-              setTimeout(() => {
-                setIsScanning(false);
-                setScanMessage(null);
-              }, 5000);
-           } else {
-              await logToFile(`Sync completed: ${sortedTracks.length} tracks updated.`);
-           }
+          const sorted = [...syncedTracks]
+            .map(t => ({ ...t, artwork: resolveArtworkUri(t.artwork) }))
+            .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+          
+          setLibrary(sorted);
+          setPlaylistState(prev => prev.length === 0 ? sorted : prev);
+          setOriginalPlaylist(prev => prev.length === 0 ? sorted : prev);
+          
+          if (sorted.length === oldSize) {
+            setScanMessage("Nothing to add");
+            setTimeout(() => setScanMessage(null), 5000);
+          }
         }
         resolve();
       });
@@ -776,74 +532,40 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const processAndAddFiles = async (fileUris: string[]) => {
-    const albumArtCache = new Map<string, string>();
+    const { parseMetadata } = await import('../utils/fileScanner');
+    const { insertTracks } = await import('../utils/database');
     const newTracks: Track[] = [];
-    let processed = 0;
-    
-    await logToFile(`Task: Processing ${fileUris.length} newly added files...`);
+
     const existingUris = new Set(library.map(t => t.uri));
     const uniqueFiles = fileUris.filter(uri => !existingUris.has(uri));
-    await logToFile(`Found ${uniqueFiles.length} unique files to parse.`);
-
     setScanProgress({ current: 0, total: uniqueFiles.length });
-    setIsScanning(true);
 
     try {
-      const { parseMetadata } = await import('../utils/fileScanner');
-      const { insertTracks } = await import('../utils/database');
-
-      for (const uri of uniqueFiles) {
+      for (let i = 0; i < uniqueFiles.length; i++) {
         try {
-          const fileName = uri.split('/').pop() || "";
-          const metadata = await parseMetadata(uri, fileName, albumArtCache);
-          
-          let lrcContent = undefined;
-          const dirPath = uri.substring(0, uri.lastIndexOf('/') + 1);
-          const nameWithoutExt = fileName.substring(0, fileName.lastIndexOf('.'));
-          const lrcUri = dirPath + nameWithoutExt + '.lrc';
-          try {
-             const lrcInfo = await FileSystem.getInfoAsync(lrcUri);
-             if (lrcInfo.exists) lrcContent = await FileSystem.readAsStringAsync(lrcUri);
-          } catch(e) {}
-
-          const track: Track = {
-            id: uri,
-            title: metadata.title,
-            artist: metadata.artist,
-            album: metadata.album,
-            uri: uri,
-            artwork: resolveArtworkUri(metadata.artwork),
-            lrc: lrcContent,
-            trackNumber: metadata.trackNumber,
-            duration: metadata.duration
-          };
-
+          const uri = uniqueFiles[i];
+          const metadata = await parseMetadata(uri, uri.split('/').pop() || '', new Map());
+          const track = await parseAndEnrichTrack(uri, metadata, new Map());
           newTracks.push(track);
-          processed++;
-          if (processed % 5 === 0) {
-             setScanProgress(prev => ({ ...prev, current: processed }));
-          }
+          if ((i + 1) % 5 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
         } catch (e) {
-          await logToFile(`Failed to process imported file ${uri}: ${e}`, 'WARN');
+          await logToFile(`Failed to process ${uniqueFiles[i]}: ${e}`, 'WARN');
         }
       }
 
       if (newTracks.length > 0) {
         await insertTracks(newTracks);
-        setLibrary(prev => {
-          const updated = [...prev, ...newTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-          return updated;
-        });
+        const sorted = (t: Track[]) => [...t, ...newTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+        setLibrary(sorted(library));
         if (queueTitle === 'All Songs') {
-             setPlaylistState(prev => isShuffle ? [...prev, ...newTracks] : [...prev, ...newTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })));
-             setOriginalPlaylist(prev => [...prev, ...newTracks].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })));
+          setPlaylistState(sorted(playlist));
+          setOriginalPlaylist(sorted(originalPlaylist));
         }
-        await logToFile(`Successfully imported and added ${newTracks.length} tracks to library.`);
+        await logToFile(`Imported ${newTracks.length} tracks.`);
       }
     } catch (e) {
       await logToFile(`Error in processAndAddFiles: ${e}`, 'ERROR');
     } finally {
-      setIsScanning(false);
       setScanProgress({ current: 0, total: 0 });
     }
   };
@@ -852,99 +574,40 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         try {
-          await logToFile('Action: Starting folder import from device...');
-          await FileSystem.makeDirectoryAsync(MUSIC_DIR, { intermediates: true });
-          
-          const newFileUris: string[] = [];
+          await ensureMusicDir(MUSIC_DIR);
+          let fileUris: string[] = [];
 
           if (Platform.OS === 'android') {
-            const permissions = await (FileSystem as any).StorageAccessFramework.requestDirectoryPermissionsAsync();
-            if (permissions.granted) {
-              const uri = permissions.directoryUri;
-              const files = await (FileSystem as any).StorageAccessFramework.readDirectoryAsync(uri);
-              setScanProgress({ current: 0, total: files.length });
-              
-              for (let i = 0; i < files.length; i++) {
-                const fileUri = files[i];
-                const fileName = decodeURIComponent(fileUri).split('/').pop();
-                if (fileName) {
-                    const destUri = MUSIC_DIR + fileName;
-                    await FileSystem.copyAsync({ from: fileUri, to: destUri });
-                    newFileUris.push(destUri);
-                }
-                if (i % 10 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
-              }
-            }
+            fileUris = await importFilesFromAndroidFolder(MUSIC_DIR, (current) =>
+              setScanProgress(prev => ({ ...prev, current }))
+            );
           } else {
-            const result = await DocumentPicker.getDocumentAsync({ type: 'public.folder', copyToCacheDirectory: false });
-            if (!result.canceled && result.assets && result.assets.length > 0) {
-              const uri = result.assets[0].uri;
-              const files = await FileSystem.readDirectoryAsync(uri);
-              setScanProgress({ current: 0, total: files.length });
-              
-              for (let i = 0; i < files.length; i++) {
-                const fileName = files[i];
-                if (!fileName.startsWith('.')) {
-                  const destUri = MUSIC_DIR + fileName;
-                  await FileSystem.copyAsync({ from: uri + (uri.endsWith('/') ? '' : '/') + fileName, to: destUri });
-                  newFileUris.push(destUri);
-                }
-                if (i % 10 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
-              }
-            }
+            fileUris = await importFilesFromIosFolder(MUSIC_DIR, (current) =>
+              setScanProgress(prev => ({ ...prev, current }))
+            );
           }
-          
-          if (newFileUris.length > 0) {
-              await processAndAddFiles(newFileUris);
-          }
-          
-        } catch (e) { await logToFile(`Critical Error in folder import: ${e}`, 'ERROR'); }
+
+          if (fileUris.length > 0) await processAndAddFiles(fileUris);
+        } catch (e) {
+          await logToFile(`Error in folder import: ${e}`, 'ERROR');
+        }
         resolve();
       });
     });
-  };
-
-  const downloadDemoTrack = async () => {
-    try {
-      await logToFile('Action: Downloading demo track...');
-      const uri = MUSIC_DIR + 'demosong.mp3';
-      const lrcUri = MUSIC_DIR + 'demosong.lrc';
-      await FileSystem.downloadAsync('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', uri);
-      const lrcContent = `[00:00.00] Demo Local Track\n[00:05.00] This file is now on your device\n[00:10.00] Testing the offline capability\n[00:15.00] It works!`;
-      await FileSystem.writeAsStringAsync(lrcUri, lrcContent);
-      await processAndAddFiles([uri]);
-    } catch (e) { await logToFile(`Error downloading demo track: ${e}`, 'ERROR'); }
   };
 
   const pickAndImportFiles = async () => {
     return new Promise<void>((resolve) => {
       queueTask(async () => {
         try {
-          await logToFile('Action: Picking specific files to import...');
-          const result = await DocumentPicker.getDocumentAsync({ type: ['audio/*', 'application/octet-stream'], multiple: true, copyToCacheDirectory: true });
-          
-          if (!result.canceled) {
-            const dirInfo = await FileSystem.getInfoAsync(MUSIC_DIR);
-            if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(MUSIC_DIR, { intermediates: true });
-            
-            const newFileUris: string[] = [];
-            setScanProgress({ current: 0, total: result.assets.length });
-            
-            for (let i = 0; i < result.assets.length; i++) {
-              const file = result.assets[i];
-              const destUri = MUSIC_DIR + file.name;
-              await FileSystem.copyAsync({ from: file.uri, to: destUri });
-              newFileUris.push(destUri);
-              if (i % 10 === 0) setScanProgress(prev => ({ ...prev, current: i + 1 }));
-            }
-            
-            if (newFileUris.length > 0) {
-                await processAndAddFiles(newFileUris);
-            }
-          } else {
-             await logToFile('File pick canceled by user.');
-          }
-        } catch (e) { await logToFile(`Error in pickAndImportFiles: ${e}`, 'ERROR'); }
+          await ensureMusicDir(MUSIC_DIR);
+          const fileUris = await importFilesFromPicker(MUSIC_DIR, (current) =>
+            setScanProgress(prev => ({ ...prev, current }))
+          );
+          if (fileUris.length > 0) await processAndAddFiles(fileUris);
+        } catch (e) {
+          await logToFile(`Error in file picker import: ${e}`, 'ERROR');
+        }
         resolve();
       });
     });
@@ -988,7 +651,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       rescanLyrics,
       removeTrack, 
       importLocalFolder, 
-      downloadDemoTrack, 
       pickAndImportFiles,
       library, 
       playlist, 

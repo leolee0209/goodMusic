@@ -13,7 +13,7 @@ export interface Track {
 export type RepeatMode = 'none' | 'one' | 'all';
 
 export type PlaybackOrigin = {
-  type: 'all' | 'artist' | 'album' | 'playlist' | 'search' | 'favorites';
+  type: 'all' | 'artist' | 'album' | 'playlist' | 'search' | 'favorites' | 'recent';
   title: string;
   searchQuery?: string;
   favoritesOnly?: boolean;
@@ -50,7 +50,6 @@ export interface MusicContextType {
   rescanLyrics: () => Promise<void>;
   removeTrack: (trackId: string) => Promise<void>;
   importLocalFolder: () => Promise<void>;
-  downloadDemoTrack: () => Promise<void>;
   pickAndImportFiles: () => Promise<void>;
   library: Track[];
   

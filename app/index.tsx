@@ -1,17 +1,25 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Image, Alert, Dimensions } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, Dimensions, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useMusic } from '../contexts/MusicContext';
-import { useSettings, Tab } from '../contexts/SettingsContext';
-import { Track, PlaybackOrigin } from '../types';
-import { Ionicons } from '@expo/vector-icons';
-import SearchBar from '../components/SearchBar';
-import { TrackActionSheet } from '../components/TrackActionSheet';
-import { normalizeForSearch } from '../utils/stringUtils';
-import { SortBar, ViewMode } from '../components/SortBar';
+import { AlbumGridItem } from '../components/AlbumGridItem';
+import { HeaderBar } from '../components/HeaderBar';
+import { MiniPlayer } from '../components/MiniPlayer';
+import { PlaylistItem } from '../components/PlaylistItem';
+import { SelectionToolbar } from '../components/SelectionToolbar';
+import { SortBar } from '../components/SortBar';
 import { SortModal } from '../components/SortModal';
-import { formatDuration } from '../utils/timeUtils';
+import { TrackActionSheet } from '../components/TrackActionSheet';
+import { TrackListItem } from '../components/TrackListItem';
+import { useMusic } from '../contexts/MusicContext';
+import { Tab, useSettings } from '../contexts/SettingsContext';
+import { useBulkPlaylistAdd } from '../hooks/useBulkPlaylistAdd';
+import { useTrackActions } from '../hooks/useTrackActions';
+import { useTrackSelection } from '../hooks/useTrackSelection';
+import { Track } from '../types';
+import { buildPlaybackOrigin, playAll, playOrToggle, shuffleAndPlay } from '../utils/playbackUtils';
+import { getSortOptionsFor, sortGroups, sortTracks } from '../utils/sortUtils';
+import { normalizeForSearch } from '../utils/stringUtils';
 
 const { width } = Dimensions.get('window');
 const GRID_ITEM_WIDTH = (width - 48) / 2; // 16 padding on sides + 16 gap
@@ -30,6 +38,8 @@ export default function HomeScreen() {
   const sortOrder = sortPreferences[activeTab]?.order || 'ASC';
   const viewMode = sortPreferences[activeTab]?.viewMode || 'list';
   const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [createPlaylistVisible, setCreatePlaylistVisible] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
 
   useEffect(() => {
     if (!searchQuery && !params.q) {
@@ -37,13 +47,10 @@ export default function HomeScreen() {
     }
   }, [defaultTab]);
 
-  // Selection Mode State
-  const [selectedTracks, setSelectedTracks] = useState<string[]>([]);
-  const isSelectionMode = selectedTracks.length > 0;
-
-  // Action Sheet State
-  const [actionSheetVisible, setActionSheetVisible] = useState(false);
-  const [activeTrack, setActiveTrack] = useState<Track | null>(null);
+  // Custom Hooks
+  const { selectedTracks, setSelectedTracks, isSelectionMode, toggleSelectTrack, clearSelection, isSelected } = useTrackSelection();
+  const { actionSheetVisible, setActionSheetVisible, activeTrack, setActiveTrack, openActionSheet, closeActionSheet } = useTrackActions();
+  const { showPlaylistPicker } = useBulkPlaylistAdd();
 
   // Handle incoming search query or favorites filter
   useEffect(() => {
@@ -56,50 +63,28 @@ export default function HomeScreen() {
   }, [params.q, params.f]);
 
   const handleCreatePlaylist = () => {
-    Alert.prompt(
-      "New Playlist",
-      "Enter a name for your playlist:",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Create", onPress: (name: string | undefined) => name && createPlaylist(name) }
-      ]
-    );
+    setNewPlaylistName('');
+    setCreatePlaylistVisible(true);
   };
 
-  const toggleSelectTrack = (trackId: string) => {
-    setSelectedTracks(prev => 
-      prev.includes(trackId) ? prev.filter(id => id !== trackId) : [...prev, trackId]
-    );
+  const handleConfirmCreatePlaylist = async () => {
+    const name = newPlaylistName.trim();
+    if (!name) {
+      Alert.alert('Name required', 'Please enter a playlist name.');
+      return;
+    }
+    await createPlaylist(name);
+    setCreatePlaylistVisible(false);
   };
 
   const handleBulkAddToPlaylist = () => {
-    if (selectedTracks.length === 0) return;
-    
-    Alert.alert(
-      "Add to Playlist",
-      `Select a playlist to add ${selectedTracks.length} songs:`,
-      [
-        ...playlists.map(p => ({
-          text: p.title,
-          onPress: async () => {
-            await addToPlaylist(p.id, selectedTracks);
-            setSelectedTracks([]);
-          }
-        })),
-        { text: "Cancel", style: "cancel" }
-      ]
-    );
-  };
-
-  const handleSingleTrackAction = (track: Track) => {
-    setActiveTrack(track);
-    setActionSheetVisible(true);
+    showPlaylistPicker(selectedTracks, clearSelection);
   };
 
   const handleActionSheetAddToPlaylist = async (playlistId: string) => {
     if (activeTrack) {
       await addToPlaylist(playlistId, [activeTrack.id]);
-      setActionSheetVisible(false);
+      closeActionSheet();
     }
   };
 
@@ -171,8 +156,8 @@ export default function HomeScreen() {
         })
       : baseSongs;
 
-    let artists = Object.entries(artistsMap).map(([name, tracks]) => ({ name, tracks, id: `artist-${name}` }));
-    let albums = Object.entries(albumsMap).map(([name, tracks]) => ({ name, tracks, id: `album-${name}` }));
+    let artists = Object.entries(artistsMap).map(([name, tracks]) => ({ name, tracks, id: `artist-${name}`, type: 'artist' }));
+    let albums = Object.entries(albumsMap).map(([name, tracks]) => ({ name, tracks, id: `album-${name}`, type: 'album' }));
 
     if (isSearching) {
       artists = artists.filter(a => {
@@ -187,112 +172,69 @@ export default function HomeScreen() {
 
     // Sorting Logic
     if (activeTab === 'songs') {
-       if (sortOption === 'Recently Played') {
-         songs.sort((a, b) => {
-           const indexA = history.indexOf(a.id);
-           const indexB = history.indexOf(b.id);
-           if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-           if (indexA !== -1) return -1; 
-           if (indexB !== -1) return 1;  
-           return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
-         });
-       } else {
-         songs.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
-       }
+      songs = sortTracks(songs, sortOption, sortOrder, history);
     } else if (activeTab === 'albums') {
-       if (sortOption === 'Track Count') {
-         albums.sort((a, b) => b.tracks.length - a.tracks.length);
-       } else {
-         albums.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-       }
+      albums = sortGroups(albums, sortOption, sortOrder);
     } else {
-       // Artists
-       if (sortOption === 'Track Count') {
-         artists.sort((a, b) => b.tracks.length - a.tracks.length);
-       } else {
-         artists.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-       }
-    }
-
-    // Apply Sort Order (Reverse if DESC)
-    if (sortOrder === 'DESC') {
-      if (activeTab === 'songs') songs.reverse();
-      else if (activeTab === 'albums') albums.reverse();
-      else if (activeTab === 'artists') artists.reverse();
+      // Artists
+      artists = sortGroups(artists, sortOption, sortOrder);
     }
 
     return { songs, artists, albums };
   }, [library, searchQuery, showFavoritesOnly, favorites, activeTab, sortOption, sortOrder, history]);
 
   const handleTrackPress = async (track: Track) => {
-    if (currentTrack?.id === track.id) {
-      router.push('/player');
-    } else {
-      const origin: PlaybackOrigin = showFavoritesOnly 
-        ? { type: 'favorites', title: 'Favorites', favoritesOnly: true } 
-        : (searchQuery ? { type: 'search', title: `Search: ${searchQuery}`, searchQuery, favoritesOnly: showFavoritesOnly } : { type: 'all', title: 'All Songs', favoritesOnly: showFavoritesOnly });
-      
-      await playTrack(track, groupedLibrary.songs, origin.title, origin);
-    }
+    const origin = showFavoritesOnly 
+      ? buildPlaybackOrigin({ type: 'favorites', title: 'Favorites', favoritesOnly: true })
+      : searchQuery 
+        ? buildPlaybackOrigin({ type: 'search', title: `Search: ${searchQuery}`, searchQuery, favoritesOnly: showFavoritesOnly })
+        : buildPlaybackOrigin({ type: 'all', title: 'All Songs', favoritesOnly: showFavoritesOnly });
+    await playOrToggle({ item: track, currentTrack, queue: groupedLibrary.songs, origin, togglePlayPause, playTrack });
   };
 
   const handlePlayAll = async () => {
     if (activeTab === 'songs') {
-      if (groupedLibrary.songs.length === 0) return;
-      await playTrack(groupedLibrary.songs[0], groupedLibrary.songs, 'All Songs');
+      const origin = buildPlaybackOrigin({ type: 'all', title: 'All Songs', favoritesOnly: showFavoritesOnly });
+      await playAll({ tracks: groupedLibrary.songs, origin, playTrack });
     } else if (activeTab === 'artists' || activeTab === 'albums') {
       const groups = activeTab === 'artists' ? groupedLibrary.artists : groupedLibrary.albums;
-      if (groups.length === 0) return;
       const allTracks = groups.flatMap(g => g.tracks);
-      await playTrack(allTracks[0], allTracks, `All ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`);
+      const origin = buildPlaybackOrigin({ type: activeTab === 'artists' ? 'artist' : 'album', title: `All ${activeTab}` });
+      await playAll({ tracks: allTracks, origin, playTrack });
     } else if (activeTab === 'playlists') {
-      if (playlists.length === 0) return;
+      if (!playlists.length) return;
       const tracks = await import('../utils/database').then(m => m.getPlaylistTracks(playlists[0].id));
-      if (tracks.length > 0) {
-        await playTrack(tracks[0], tracks, playlists[0].title);
-      }
+      const origin = buildPlaybackOrigin({ type: 'playlist', title: playlists[0].title });
+      await playAll({ tracks, origin, playTrack });
     }
   };
 
   const handleShuffleAll = async () => {
     if (activeTab === 'songs') {
-      if (groupedLibrary.songs.length === 0) return;
-      const randomIndex = Math.floor(Math.random() * groupedLibrary.songs.length);
-      await playTrack(groupedLibrary.songs[randomIndex], groupedLibrary.songs, 'Shuffle Songs');
+      const origin = buildPlaybackOrigin({ type: 'all', title: 'Shuffle Songs', favoritesOnly: showFavoritesOnly });
+      await shuffleAndPlay({ tracks: groupedLibrary.songs, origin, playTrack });
     } else if (activeTab === 'artists' || activeTab === 'albums') {
-      const groups = [...(activeTab === 'artists' ? groupedLibrary.artists : groupedLibrary.albums)];
-      if (groups.length === 0) return;
-      
-      // Shuffle the groups themselves (Artists or Albums)
-      for (let i = groups.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [groups[i], groups[j]] = [groups[j], groups[i]];
-      }
-      
-      const shuffledTracks = groups.flatMap(g => g.tracks);
-      await playTrack(shuffledTracks[0], shuffledTracks, `Shuffle ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`);
+      const groups = activeTab === 'artists' ? groupedLibrary.artists : groupedLibrary.albums;
+      const allTracks = groups.flatMap(g => g.tracks);
+      const origin = buildPlaybackOrigin({ type: activeTab === 'artists' ? 'artist' : 'album', title: `Shuffle ${activeTab}` });
+      await shuffleAndPlay({ tracks: allTracks, origin, playTrack });
     } else if (activeTab === 'playlists') {
-      if (playlists.length === 0) return;
+      if (!playlists.length) return;
       const randomIndex = Math.floor(Math.random() * playlists.length);
       const playlist = playlists[randomIndex];
       const tracks = await import('../utils/database').then(m => m.getPlaylistTracks(playlist.id));
-      if (tracks.length > 0) {
-        const shuffled = [...tracks].sort(() => Math.random() - 0.5);
-        await playTrack(shuffled[0], shuffled, playlist.title);
-      }
+      const origin = buildPlaybackOrigin({ type: 'playlist', title: playlist.title });
+      await shuffleAndPlay({ tracks, origin, playTrack });
     }
   };
 
   const handleSideButtonPress = async (track: Track) => {
-    if (currentTrack?.id === track.id) {
-      await togglePlayPause();
-    } else {
-      const origin: PlaybackOrigin = showFavoritesOnly 
-        ? { type: 'favorites', title: 'Favorites', favoritesOnly: true } 
-        : (searchQuery ? { type: 'search', title: `Search: ${searchQuery}`, searchQuery, favoritesOnly: showFavoritesOnly } : { type: 'all', title: 'All Songs', favoritesOnly: showFavoritesOnly });
-      
-      await playTrack(track, groupedLibrary.songs, origin.title, origin);
-    }
+    const origin = showFavoritesOnly 
+      ? buildPlaybackOrigin({ type: 'favorites', title: 'Favorites', favoritesOnly: true })
+      : searchQuery 
+        ? buildPlaybackOrigin({ type: 'search', title: `Search: ${searchQuery}`, searchQuery, favoritesOnly: showFavoritesOnly })
+        : buildPlaybackOrigin({ type: 'all', title: 'All Songs', favoritesOnly: showFavoritesOnly });
+    await playOrToggle({ item: track, currentTrack, queue: groupedLibrary.songs, origin, togglePlayPause, playTrack });
   };
 
   const handleGroupPress = (group: { name: string, tracks: Track[] }, type: 'artist' | 'album') => {
@@ -311,204 +253,75 @@ export default function HomeScreen() {
 
   // --- RENDER FUNCTIONS ---
 
-  const renderPlaylistItem = ({ item }: { item: any }) => {
-    // Playlist only supports List for now, but we can respect Condensed
-    const isCondensed = viewMode === 'condensed';
-    return (
-      <TouchableOpacity style={[styles.groupItem, isCondensed && styles.groupItemCondensed]} onPress={() => handlePlaylistItemPress(item)}>
-        <View style={[styles.groupIcon, isCondensed && styles.groupIconCondensed]}>
-          <Ionicons name="list" size={isCondensed ? 20 : 24} color={themeColor} />
-        </View>
-        <View style={styles.info}>
-          <Text style={styles.groupTitle} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.groupSubtitle}>Playlist</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color="#666" />
-      </TouchableOpacity>
-    );
-  };
+  const renderPlaylistItem = ({ item }: { item: any }) => (
+    <PlaylistItem
+      title={item.title}
+      themeColor={themeColor}
+      viewMode={viewMode}
+      onPress={() => handlePlaylistItemPress(item)}
+    />
+  );
 
   const renderSongItem = ({ item }: { item: Track }) => {
     const isCurrent = currentTrack?.id === item.id;
-    const isSelected = selectedTracks.includes(item.id);
 
-    if (viewMode === 'grid') {
-      return (
-        <TouchableOpacity 
-          style={[styles.gridItem, isCurrent && { borderColor: themeColor, borderWidth: 1 }]} 
-          onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
-          onLongPress={() => toggleSelectTrack(item.id)}
-        >
-          <View style={styles.gridArtworkContainer}>
-            {item.artwork ? (
-              <Image source={{ uri: item.artwork }} style={styles.gridArtwork} />
-            ) : (
-              <View style={[styles.gridArtwork, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }]}>
-                <Ionicons name="musical-note" size={40} color="#555" />
-              </View>
-            )}
-            {isSelected && (
-              <View style={styles.selectedOverlay}>
-                <Ionicons name="checkmark-circle" size={32} color={themeColor} />
-              </View>
-            )}
-            {isCurrent && isPlaying && (
-              <View style={[styles.selectedOverlay, { backgroundColor: 'rgba(0,0,0,0.3)' }]}>
-                 <Ionicons name="play" size={32} color={themeColor} />
-              </View>
-            )}
-          </View>
-          <Text style={[styles.gridTitle, isCurrent && { color: themeColor }]} numberOfLines={1}>{item.title}</Text>
-          <Text style={styles.gridSubtitle} numberOfLines={1}>{item.artist}</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    const isCondensed = viewMode === 'condensed';
     return (
-      <View style={[
-        styles.item, 
-        isCondensed && styles.itemCondensed,
-        isCurrent && [styles.activeItem, { borderLeftColor: themeColor }], 
-        isSelected && [styles.selectedItem, { borderColor: themeColor, backgroundColor: `${themeColor}1A` }]
-      ]}>
-        <TouchableOpacity 
-          style={styles.itemContent} 
-          onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
-          onLongPress={() => toggleSelectTrack(item.id)}
-        >
-          {!isCondensed && (
-            <View style={styles.artworkPlaceholder}>
-              {item.artwork ? (
-                <Image source={{ uri: item.artwork }} style={styles.artwork} key={item.artwork} />
-              ) : (
-                <Ionicons name="musical-note" size={24} color="#555" />
-              )}
-              {isSelected && (
-                <View style={styles.selectedOverlay}>
-                  <Ionicons name="checkmark-circle" size={24} color={themeColor} />
-                </View>
-              )}
-            </View>
-          )}
-          {isCondensed && isSelected && (
-             <Ionicons name="checkmark-circle" size={20} color={themeColor} style={{ marginRight: 10 }} />
-          )}
-
-          <View style={styles.info}>
-            <Text style={[styles.title, isCurrent && { color: themeColor }]} numberOfLines={1}>{item.title}</Text>
-            <Text style={styles.artist} numberOfLines={1}>
-              {item.artist} {isCondensed ? `• ${formatDuration(item.duration)}` : `• ${formatDuration(item.duration)}`}
-            </Text>
-          </View>
-        </TouchableOpacity>
-        
-        <View style={styles.sideButtons}>
-          {!isCondensed && (
-             <TouchableOpacity style={styles.sideButton} onPress={() => handleSingleTrackAction(item)}>
-               <Ionicons name="ellipsis-vertical" size={20} color="#888" />
-             </TouchableOpacity>
-          )}
-          <TouchableOpacity style={styles.sideButton} onPress={() => handleSideButtonPress(item)}>
-            <Ionicons name={isCurrent && isPlaying ? "pause-circle" : "play-circle-outline"} size={isCondensed ? 24 : 30} color={isCurrent ? themeColor : "#888"} />
-          </TouchableOpacity>
-        </View>
-      </View>
+      <TrackListItem
+        track={item}
+        viewMode={viewMode}
+        isCurrent={isCurrent}
+        isSelected={isSelected(item.id)}
+        isSelectionMode={isSelectionMode}
+        themeColor={themeColor}
+        onPress={() => isSelectionMode ? toggleSelectTrack(item.id) : handleTrackPress(item)}
+        onLongPress={() => toggleSelectTrack(item.id)}
+        onSidePress={() => handleSideButtonPress(item)}
+        onMorePress={() => openActionSheet(item)}
+        showAlbum={true}
+      />
     );
   };
 
   const renderGroupItem = ({ item, type }: { item: { name: string, tracks: Track[] }, type: 'artist' | 'album' }) => {
     const coverArt = item.tracks.find(t => t.artwork)?.artwork;
-    const subtitle = type === 'album' ? (item.tracks[0]?.artist || 'Unknown Artist') : `${item.tracks.length} songs`;
+    const subtitle = type === 'album' ? (item.tracks[0]?.artist || 'Unknown Artist') : undefined;
     
-    if (viewMode === 'grid') {
-      return (
-        <TouchableOpacity 
-          style={styles.gridItem}
-          onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}
-        >
-          <View style={styles.gridArtworkContainer}>
-            {coverArt ? (
-              <Image source={{ uri: coverArt }} style={styles.gridArtwork} />
-            ) : (
-              <View style={[styles.gridArtwork, { backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' }]}>
-                <Ionicons name={type === 'artist' ? 'person' : 'disc'} size={40} color="#555" />
-              </View>
-            )}
-          </View>
-          <Text style={styles.gridTitle} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.gridSubtitle} numberOfLines={1}>{subtitle}</Text>
-        </TouchableOpacity>
-      );
-    }
-
-    const isCondensed = viewMode === 'condensed';
     return (
-      <TouchableOpacity 
-        style={[styles.groupItem, isCondensed && styles.groupItemCondensed]} 
+      <AlbumGridItem
+        name={item.name}
+        trackCount={item.tracks.length}
+        artwork={coverArt}
+        viewMode={viewMode}
+        type={type}
+        subtitle={subtitle}
         onPress={() => handleGroupPress({ name: item.name, tracks: item.tracks }, type)}
-      >
-        <View style={[styles.groupIcon, isCondensed && styles.groupIconCondensed]}>
-          {coverArt ? (
-            <Image source={{ uri: coverArt }} style={styles.artwork} key={coverArt} />
-          ) : (
-            <Ionicons name={type === 'artist' ? 'person' : 'disc'} size={isCondensed ? 20 : 24} color="#fff" />
-          )}
-        </View>
-        <View style={styles.info}>
-          <Text style={styles.groupTitle} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.groupSubtitle}>{subtitle}</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color="#666" />
-      </TouchableOpacity>
+      />
     );
   };
 
   const isSearching = searchQuery.trim().length > 0;
   
-  const getSortOptions = () => {
-      if (activeTab === 'songs') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Recently Played', value: 'Recently Played' }];
-      if (activeTab === 'albums') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Track Count', value: 'Track Count' }];
-      if (activeTab === 'artists') return [{ label: 'Alphabetical', value: 'Alphabetical' }, { label: 'Track Count', value: 'Track Count' }];
-      return [{ label: 'Alphabetical', value: 'Alphabetical' }];
-  };
+  const getSortOptions = () => getSortOptionsFor(activeTab === 'songs' ? 'songs' : activeTab === 'albums' ? 'albums' : 'artists');
 
   // Only allow ViewMode toggle in main tabs, not search
   const showViewOptions = !isSearching && activeTab !== 'playlists';
 
   return (
     <SafeAreaView style={styles.container}>
-      {isSelectionMode ? (
-        <View style={[styles.topBar, styles.selectionBar, { backgroundColor: themeColor }]}>
-          <TouchableOpacity onPress={() => setSelectedTracks([])} style={styles.iconButton}>
-            <Ionicons name="close" size={30} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.selectionTitle}>{selectedTracks.length} Selected</Text>
-          <TouchableOpacity onPress={handleBulkAddToPlaylist} style={styles.iconButton}>
-            <Ionicons name="add-circle" size={30} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={styles.topBar}>
-          <TouchableOpacity onPress={() => router.push('/settings')} style={styles.iconButton}>
-            <Ionicons name="settings-outline" size={24} color="#fff" />
-          </TouchableOpacity>
-          <SearchBar 
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onClear={() => setSearchQuery('')}
-            containerStyle={styles.mainSearchBar}
-          />
-          <View style={styles.actionButtons}>
-            <TouchableOpacity onPress={handleCreatePlaylist} style={styles.iconButton}>
-              <Ionicons name="add-outline" size={28} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowFavoritesOnly(!showFavoritesOnly)} style={styles.iconButton}>
-              <Ionicons name={showFavoritesOnly ? "heart" : "heart-outline"} size={24} color={showFavoritesOnly ? themeColor : "#fff"} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+      <HeaderBar
+        isSelectionMode={isSelectionMode}
+        selectedCount={selectedTracks.length}
+        themeColor={themeColor}
+        onClearSelection={() => setSelectedTracks([])}
+        onAddToPlaylist={handleBulkAddToPlaylist}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onSearchClear={() => setSearchQuery('')}
+        showFavoritesOnly={showFavoritesOnly}
+        onToggleFavorites={() => setShowFavoritesOnly(!showFavoritesOnly)}
+        onSettings={() => router.push('/settings')}
+        onCreatePlaylist={handleCreatePlaylist}
+      />
 
       {!isSearching && (
         <View>
@@ -602,24 +415,54 @@ export default function HomeScreen() {
         )}
       </View>
 
-      {currentTrack && (
-        <TouchableOpacity style={styles.miniPlayer} onPress={() => router.push('/player')} activeOpacity={0.9}>
-          <View style={styles.miniArtworkContainer}>
-             {currentTrack.artwork ? <Image source={{ uri: currentTrack.artwork }} style={styles.miniArtwork} key={currentTrack.artwork} /> : <Ionicons name="musical-note" size={20} color="#aaa" />}
+      <MiniPlayer 
+        track={currentTrack}
+        isPlaying={!!isPlaying}
+        onTogglePlayPause={togglePlayPause}
+        onPress={() => router.push('/player')}
+      />
+
+      <Modal
+        transparent
+        visible={createPlaylistVisible}
+        animationType="fade"
+        onRequestClose={() => setCreatePlaylistVisible(false)}
+      >
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setCreatePlaylistVisible(false)}>
+          <View style={styles.createModalContent}>
+            <Text style={styles.modalTitle}>New Playlist</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Playlist name"
+              placeholderTextColor="#888"
+              value={newPlaylistName}
+              onChangeText={setNewPlaylistName}
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalButton} onPress={() => setCreatePlaylistVisible(false)}>
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.modalButtonPrimary]} onPress={handleConfirmCreatePlaylist}>
+                <Text style={[styles.modalButtonText, styles.modalButtonPrimaryText]}>Create</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-          <View style={styles.miniInfo}>
-            <Text style={styles.miniTitle} numberOfLines={1}>{currentTrack.title}</Text>
-            <Text style={styles.miniArtist} numberOfLines={1}>{currentTrack.artist}</Text>
-          </View>
-          <TouchableOpacity onPress={togglePlayPause} style={styles.miniControls}>
-            <Ionicons name={isPlaying ? "pause" : "play"} size={28} color="#fff" />
-          </TouchableOpacity>
         </TouchableOpacity>
+      </Modal>
+
+      {isSelectionMode && (
+        <SelectionToolbar
+          selectedCount={selectedTracks.length}
+          themeColor={themeColor}
+          onAddToPlaylist={handleBulkAddToPlaylist}
+          onCancel={clearSelection}
+        />
       )}
 
       <TrackActionSheet
         visible={actionSheetVisible}
-        onClose={() => setActionSheetVisible(false)}
+        onClose={closeActionSheet}
         track={activeTrack}
         playlists={playlists}
         onAddToPlaylist={handleActionSheetAddToPlaylist}
@@ -687,11 +530,44 @@ const styles = StyleSheet.create({
 
   emptyContainer: { alignItems: 'center', marginTop: 50 },
   emptyText: { color: '#888', fontSize: 16 },
+  
+  // Selection Toolbar
+  selectionToolbar: { 
+    position: 'absolute', 
+    bottom: 80, 
+    left: 16, 
+    right: 16, 
+    borderRadius: 12, 
+    padding: 16,
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  selectionText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  selectionActions: { flexDirection: 'row', gap: 12 },
+  toolbarButton: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  toolbarButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  
   miniPlayer: { position: 'absolute', bottom: 20, left: 10, right: 10, backgroundColor: '#282828', padding: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', elevation: 8 },
   miniArtworkContainer: { width: 40, height: 40, borderRadius: 4, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   miniArtwork: { width: '100%', height: '100%' },
   miniInfo: { flex: 1, marginLeft: 12 },
   miniTitle: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
   miniArtist: { color: '#aaa', fontSize: 12 },
-  miniControls: { paddingHorizontal: 10 }
+  miniControls: { paddingHorizontal: 10 },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
+  createModalContent: { width: '100%', backgroundColor: '#1E1E1E', borderRadius: 14, padding: 20 },
+  modalTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' },
+  modalInput: { backgroundColor: '#282828', color: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, gap: 10 },
+  modalButton: { paddingVertical: 10, paddingHorizontal: 14 },
+  modalButtonPrimary: { backgroundColor: '#fff', borderRadius: 8 },
+  modalButtonText: { color: '#ccc', fontSize: 15, fontWeight: '600' },
+  modalButtonPrimaryText: { color: '#000' },
 });

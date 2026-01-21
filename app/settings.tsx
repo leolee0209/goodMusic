@@ -1,10 +1,11 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, FlatList, Linking, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import React from 'react';
+import { Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { BottomSheet } from '../components/BottomSheet';
 import { useMusic } from '../contexts/MusicContext';
-import { useSettings, Tab } from '../contexts/SettingsContext';
+import { Tab, useSettings } from '../contexts/SettingsContext';
 
 const THEME_COLORS = [
   '#1DB954', // Spotify Green
@@ -195,25 +196,28 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
-      <Modal visible={showTabPicker} transparent animationType="fade">
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowTabPicker(false)}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Select Default Tab</Text>
-            {(['songs', 'artists', 'albums', 'playlists'] as Tab[]).map(tab => (
-              <TouchableOpacity 
-                key={tab} 
-                style={styles.modalItem}
-                onPress={() => { setDefaultTab(tab); setShowTabPicker(false); }}
-              >
-                <Text style={[styles.modalItemText, defaultTab === tab && { color: themeColor, fontWeight: 'bold' }]}>
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </Text>
-                {defaultTab === tab && <Ionicons name="checkmark" size={20} color={themeColor} />}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      <BottomSheet 
+        visible={showTabPicker} 
+        onClose={() => setShowTabPicker(false)} 
+        title="Select Default Tab" 
+        showHandle={true}
+        maxHeightPercent={60}
+      >
+        <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+          {(['songs', 'artists', 'albums', 'playlists'] as Tab[]).map(tab => (
+            <TouchableOpacity 
+              key={tab} 
+              style={styles.modalItem}
+              onPress={() => { setDefaultTab(tab); setShowTabPicker(false); }}
+            >
+              <Text style={[styles.modalItemText, defaultTab === tab && { color: themeColor, fontWeight: 'bold' }]}>
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </Text>
+              {defaultTab === tab && <Ionicons name="checkmark" size={20} color={themeColor} />}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </BottomSheet>
     </SafeAreaView>
   );
 }
@@ -342,35 +346,20 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    width: '80%',
-    backgroundColor: '#1E1E1E',
-    borderRadius: 16,
-    padding: 20,
-  },
-  modalTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
+  scrollContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
   },
   modalItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 15,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: '#282828',
   },
   modalItemText: {
-    color: '#ccc',
+    color: '#fff',
     fontSize: 16,
   }
 });

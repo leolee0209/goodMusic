@@ -1,8 +1,9 @@
-import React from 'react';
-import { View, Text, Modal, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
-import { Track } from '../types';
 import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
+import { FlatList, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSettings } from '../contexts/SettingsContext';
+import { Track } from '../types';
+import { BottomSheet } from './BottomSheet';
 
 interface QueueModalProps {
   visible: boolean;
@@ -22,22 +23,8 @@ export const QueueModal: React.FC<QueueModalProps> = ({
   const { themeColor } = useSettings();
 
   return (
-    <Modal
-      animationType="slide"
-      transparent={true}
-      visible={visible}
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.header}>
-            <Text style={styles.headerTitle}>Up Next</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Ionicons name="close" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-          
-          <FlatList
+    <BottomSheet visible={visible} onClose={onClose} title="Up Next" showHandle={true} maxHeightPercent={70}>
+      <FlatList
             data={playlist}
             keyExtractor={item => item.id}
             renderItem={({ item }) => {
@@ -50,7 +37,13 @@ export const QueueModal: React.FC<QueueModalProps> = ({
                     onClose();
                   }}
                 >
-                  <Image source={{ uri: item.artwork }} style={styles.artwork} />
+                  {item.artwork ? (
+                    <Image source={{ uri: item.artwork }} style={styles.artwork} />
+                  ) : (
+                    <View style={[styles.artwork, styles.artworkPlaceholder]}>
+                      <Ionicons name="musical-note" size={20} color="#777" />
+                    </View>
+                  )}
                   <View style={styles.info}>
                     <Text style={[styles.title, isCurrent && { color: themeColor, fontWeight: 'bold' }]} numberOfLines={1} ellipsizeMode="middle">
                       {item.title}
@@ -67,37 +60,11 @@ export const QueueModal: React.FC<QueueModalProps> = ({
             }}
             contentContainerStyle={styles.listContent}
           />
-        </View>
-      </View>
-    </Modal>
+    </BottomSheet>
   );
 };
 
 const styles = StyleSheet.create({
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#1E1E1E',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    height: '70%',
-    paddingTop: 20,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 20,
-  },
-  headerTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
   listContent: {
     paddingHorizontal: 20,
     paddingBottom: 40,
@@ -115,6 +82,10 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 4,
     backgroundColor: '#333',
+  },
+  artworkPlaceholder: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   info: {
     flex: 1,
