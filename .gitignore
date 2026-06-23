@@ -3,6 +3,7 @@ GEMINI.md
 FEATURES.md
 TODO.md
 .vscode
+.github/copilot-instructions.md
 # dependencies
 node_modules/
 

@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.jpg",
     "scheme": "goodmusic",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.leo.goodMusic",
@@ -25,7 +24,6 @@
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/icon.jpg"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.RECORD_AUDIO",
